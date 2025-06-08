@@ -1,0 +1,2455 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roteiro de Promotores - Hygieline V6</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- SheetJS (js-xlsx) for Excel generation -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+    
+    <link rel="apple-touch-icon" href="https://i.imgur.com/aZaLV3D.png">
+    <meta name="theme-color" content="#0284c7">
+
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, doc, getDoc, setDoc, updateDoc, collection, 
+            getDocs, onSnapshot, serverTimestamp, addDoc, query, where, 
+            Timestamp, deleteDoc
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Global Variables ---
+        let app, auth, db;
+        let currentUser = null, currentPromoterData = null;
+        let currentDayOfWeek = 'monday', currentEffectiveDate = null;
+        let allPromotersCache = [], allMasterStores = [];
+        let unsubscribeSchedule = null;
+        let currentReportData = { supplies: [], expenses: new Map() };
+        // Variável para guardar a loja ao abrir o modal de registo inicial de detalhes
+        let currentStoreForInitialRegistration = null; 
+        // Variável para guardar a loja ao abrir o modal de registo de visita/suprimento
+        let currentStoreForSupply = null;
+        
+        const adminViewDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        let adminViewCurrentDayIndex = 0;
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'hygieline-roteiros-v6-fallback';
+
+        // Perfis de promotores iniciais para demonstração. Em um ambiente de produção real,
+        // as senhas devem ser hashadas e gerenciadas de forma segura.
+        const initialPromoterProfiles = [
+            { username: "admin", displayName: "Admin Geral", password: "admin123", role: "superadmin", 
+              permissions: { canManageUsers: true, canViewExpenseReports: true, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "weliton", displayName: "Weliton", password: "weliton123", role: "coordenador", 
+              permissions: { canManageUsers: true, canViewExpenseReports: true, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "rafael", displayName: "Rafael", password: "rafael123", role: "coordenador", 
+              permissions: { canManageUsers: true, canViewExpenseReports: true, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "arino", displayName: "Arino", password: "arino123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "tainara", displayName: "Tainara", password: "tainara123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "mariarosemar", displayName: "Maria Rosemar", password: "mariarosemar123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "priscila", displayName: "Priscila", password: "priscila123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "william", displayName: "William", password: "william123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "fernando", displayName: "Fernando", password: "fernando123", role: "lider_de_promotores", 
+              permissions: { canManageUsers: true, canViewExpenseReports: true, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "davi", displayName: "Davi", password: "davi123", role: "lider_de_promotores", 
+              permissions: { canManageUsers: true, canViewExpenseReports: true, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "iara", displayName: "Iara", password: "iara123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "cristiano", displayName: "Cristiano", password: "cristiano123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "aline", displayName: "Aline", password: "aline123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "leandro", displayName: "Leandro", password: "leandro123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "magda", displayName: "Magda", password: "magda123", role: "promotor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "vendedor1", displayName: "Vendedor Teste", password: "vendedor123", role: "vendedor", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: true, canLaunchExpenses: true } }, // Adicionado canLaunchExpenses
+            { username: "outros1", displayName: "Outro Funcionario", password: "outros123", role: "outros", 
+              permissions: { canManageUsers: false, canViewExpenseReports: false, canModifySchedule: false, canLaunchExpenses: false } } // Adicionado canLaunchExpenses
+        ];
+
+        let ui; // Objeto para armazenar referências a elementos da UI
+
+        // --- Helper Functions ---
+        // Atualiza a data efetiva exibida com base no dia da semana selecionado
+        function updateCurrentEffectiveDate() {
+            currentEffectiveDate = getCalendarDateForSelectedDay(currentDayOfWeek);
+            const dayNames = { monday: "Segunda", tuesday: "Terça", wednesday: "Quarta", thursday: "Quinta", friday: "Sexta", saturday: "Sábado"};
+            if (ui.currentEffectiveDateDisplay) ui.currentEffectiveDateDisplay.textContent = `Data para ${dayNames[currentDayOfWeek]}: ${currentEffectiveDate}`;
+        }
+
+        // Retorna a data do calendário para um determinado dia da semana (ex: 'monday')
+        function getCalendarDateForSelectedDay(dayName) {
+            const dayMap = { monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 0 }; 
+            const targetDay = dayMap[dayName]; 
+            const today = new Date();
+            const currentDay = today.getDay(); 
+            let dateOffset = targetDay - currentDay;
+            // Ajusta para a semana corrente se o dia já passou
+            if (dateOffset < 0) {
+                dateOffset += 7;
+            }
+            const effectiveDateObj = new Date(new Date().setDate(today.getDate() + dateOffset)); 
+            return effectiveDateObj.toISOString().split('T')[0]; 
+        }
+
+        // Cria um botão com estilos e handler de clique
+        function createStoreActionButton(text, classes, onClickHandler) {
+            const button = document.createElement('button');
+            button.textContent = text;
+            button.className = `px-3 py-1.5 text-xs font-semibold text-white rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-opacity-75 ${classes}`;
+            button.addEventListener('click', onClickHandler);
+            return button;
+        }
+
+        // Renderiza a lista de lojas para o promotor logado no dia atual
+        function renderStoresForPromoter() {
+            if (!ui.storesList || !currentPromoterData?.schedule) return;
+            const storesForDay = currentPromoterData.schedule[currentDayOfWeek] || [];
+            ui.storesList.innerHTML = storesForDay.length === 0 ? '<li class="p-3 text-gray-500">Nenhuma loja adicionada para este dia.</li>' : '';
+
+            storesForDay.forEach((store, index) => {
+                const li = document.createElement('li');
+                li.className = 'flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 mb-2 rounded-lg shadow-sm transition-all duration-300';
+                const isAttended = store.status === 'attended';
+                li.classList.add(isAttended ? 'bg-green-50' : 'bg-red-50', 'border-l-4', isAttended ? 'border-green-500' : 'border-red-500');
+
+                let storeInfoHTML = `<div class="flex-grow">
+                    <span class="font-medium ${isAttended ? 'text-green-700' : 'text-red-700'} block">${store.name}</span>`;
+                if (store.attendedTimestamp) {
+                    const attendedDate = store.attendedTimestamp.toDate();
+                    storeInfoHTML += `<span class="text-xs text-gray-500 block">Atendida em: ${attendedDate.toLocaleString('pt-BR')}</span>`;
+                }
+                // Adiciona o link de localização apenas se a loja tiver uma localização registada
+                if (store.location && store.location.latitude && store.location.longitude) {
+                    storeInfoHTML += `<a href="https://www.google.com/maps/search/?api=1&query=${store.location.latitude},${store.location.longitude}" target="_blank" class="text-xs text-blue-500 hover:underline block">Ver Localização no Mapa</a>`;
+                }
+                storeInfoHTML += '</div>';
+                li.innerHTML = storeInfoHTML; // Define o conteúdo HTML do item da lista
+                
+                const buttonsDiv = document.createElement('div'); 
+                buttonsDiv.className = 'space-x-2 flex-shrink-0 mt-2 sm:mt-0';
+                
+                const registerVisitBtn = createStoreActionButton('Registrar Visita', 'bg-blue-500 hover:bg-blue-600 focus:ring-blue-400', () => openSupplyModal(index, store));
+                const editStoreBtn = createStoreActionButton('Editar', 'bg-purple-500 hover:bg-purple-600', () => openEditStoreModal(index, store)); 
+                
+                if (isAttended) {
+                    registerVisitBtn.disabled = true;
+                    registerVisitBtn.textContent = 'Visitado';
+                    registerVisitBtn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                    registerVisitBtn.classList.add('bg-gray-400', 'cursor-not-allowed');
+                }
+                buttonsDiv.appendChild(registerVisitBtn);
+                if (currentUser?.permissions?.canModifySchedule) { 
+                    buttonsDiv.appendChild(editStoreBtn);
+                }
+                
+                li.appendChild(buttonsDiv); // ANEXA A DIV DE BOTÕES AO ITEM DA LISTA
+                ui.storesList.appendChild(li); // ANEXA O ITEM DA LISTA À LISTA PRINCIPAL
+            });
+        }
+
+
+        // --- Main Functions ---
+
+        // Inicializa o Firebase Auth e define o listener para o estado de autenticação
+        async function initializeAppAndAuth() {
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    // Se o utilizador já está autenticado (e `currentUser` já está definido), recarrega os dados.
+                    // Isso pode acontecer se o utilizador atualizar a página.
+                    if (currentUser) { 
+                        console.log("Utilizador autenticado no Firebase, recarregando dados...");
+                        await loadAllMasterStores(); 
+                        await loadAllPromotersDataForCache();
+                        if (currentUser.role === 'superadmin' || currentUser.permissions.canManageUsers || currentUser.permissions.canViewExpenseReports) { 
+                             showAdminView();
+                        } else {
+                            showPromoterView();
+                        }
+                    } else {
+                        // Se o utilizador está autenticado no Firebase, mas `currentUser` não está definido (primeiro carregamento ou após logout),
+                        // assume que precisa ir para a tela de login para buscar os dados do perfil localmente.
+                        console.log("Estado de autenticação alterado, mas currentUser não definido. Mostrando tela de login.");
+                        showLoginView();
+                    }
+                } else {
+                    // Se nenhum utilizador está autenticado no Firebase, mostra a tela de login.
+                    console.log("Nenhum utilizador autenticado no Firebase. Mostrando tela de login.");
+                    showLoginView();
+                }
+            });
+        }
+        
+        // Inicializa os perfis de promotores no Firestore se não existirem
+        async function initializePromoterProfiles() {
+            console.log("A tentar inicializar perfis de promotores no Firestore...");
+            const collectionRef = collection(db, `artifacts/${appId}/public/data/promoter_profiles`);
+            for (const profile of initialPromoterProfiles) {
+                const promoterDocRef = doc(collectionRef, profile.username);
+                try {
+                    const docSnap = await getDoc(promoterDocRef);
+                    if (!docSnap.exists()) {
+                        await setDoc(promoterDocRef, {
+                            username: profile.username,
+                            displayName: profile.displayName,
+                            password: profile.password, // ATENÇÃO: Senhas em texto claro NÃO são seguras para produção!
+                            role: profile.role,
+                            permissions: profile.permissions, 
+                            schedule: { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [] }
+                        });
+                        console.log(`Perfil ${profile.username} criado no Firestore.`);
+                    } else {
+                        // Se o perfil já existe, apenas atualiza display name, password e permissions.
+                        // O merge: true garante que o campo 'schedule' e outros campos existentes não sejam sobrescritos
+                        await setDoc(promoterDocRef, { 
+                            displayName: profile.displayName,
+                            password: profile.password, 
+                            role: profile.role,
+                            permissions: profile.permissions, 
+                        }, { merge: true });
+                        console.log(`Perfil ${profile.username} já existe. Dados atualizados.`);
+                    }
+                } catch (error) {
+                    console.error(`Erro ao criar/verificar perfil ${profile.username}:`, error);
+                }
+            }
+            console.log("Inicialização de perfis de promotores concluída.");
+        }
+
+        // Lida com o processo de login
+        async function handleLogin() {
+            const usernameVal = ui.usernameInput.value.trim().toLowerCase();
+            const passwordVal = ui.passwordInput.value.trim();
+            ui.loginError?.classList.add('hidden'); 
+            
+            if (!usernameVal || !passwordVal) {
+                showModal("Por favor, preencha o utilizador e a palavra-passe.");
+                return;
+            }
+            
+            try {
+                const collectionRef = collection(db, `artifacts/${appId}/public/data/promoter_profiles`);
+                // Consulta o Firestore para encontrar o utilizador com o username e palavra-passe fornecidos
+                const q = query(collectionRef, where("username", "==", usernameVal), where("password", "==", passwordVal));
+                const querySnapshot = await getDocs(q);
+
+                if (!querySnapshot.empty) {
+                    const promoterDoc = querySnapshot.docs[0];
+                    const promoterData = { id: promoterDoc.id, ...promoterDoc.data() };
+                    
+                    currentUser = { 
+                        username: promoterData.username, 
+                        displayName: promoterData.displayName,
+                        role: promoterData.role,
+                        permissions: promoterData.permissions 
+                    };
+                    currentPromoterData = promoterData; 
+
+                    // Carrega os dados mestre e de promotores para cache após o login bem-sucedido
+                    await loadAllMasterStores(); 
+                    await loadAllPromotersDataForCache();
+
+                    // Redireciona para a visão apropriada (admin ou promotor)
+                    if (currentUser.role === 'superadmin' || currentUser.permissions.canManageUsers || currentUser.permissions.canViewExpenseReports) { 
+                        showAdminView();
+                    } else {
+                        updateCurrentEffectiveDate();
+                        showPromoterView();
+                        // Escuta mudanças no agendamento do promotor logado
+                        listenToPromoterScheduleChanges(promoterData.username);
+                    }
+                } else {
+                    ui.loginError.textContent = "Utilizador ou palavra-passe incorretos. Por favor, tente novamente. Ex: admin/admin123";
+                    ui.loginError.classList.remove('hidden');
+                }
+            } catch (error) {
+                console.error("Erro na tentativa de login:", error);
+                ui.loginError.textContent = `Erro durante a tentativa de login: ${error.message}. Verifique as permissões na consola.`;
+                ui.loginError.classList.remove('hidden');
+            }
+        }
+
+        // --- UI & Navigation Functions ---
+        // Mostra um modal de mensagem simples
+        function showModal(message) {
+            if (ui.modalMessageElement) ui.modalMessageElement.textContent = message;
+            if (ui.modalElement) ui.modalElement.classList.remove('hidden');
+        }
+
+        // Mostra um modal de confirmação com opções "Sim" e "Não"
+        function showConfirmModal(message, onConfirm) {
+            if (ui.confirmMessageElement) ui.confirmMessageElement.textContent = message;
+            
+            // Clona o botão para remover listeners antigos e evitar múltiplos eventos
+            if (ui.confirmYesButton) { 
+                const newYesButton = ui.confirmYesButton.cloneNode(true);
+                if (ui.confirmYesButton.parentNode) ui.confirmYesButton.parentNode.replaceChild(newYesButton, ui.confirmYesButton);
+                ui.confirmYesButton = newYesButton;
+
+                ui.confirmYesButton.addEventListener('click', () => {
+                    onConfirm();
+                    if (ui.confirmModalElement) ui.confirmModalElement.classList.add('hidden');
+                }, { once: true }); // O { once: true } garante que o evento seja disparado apenas uma vez
+            }
+            if (ui.confirmModalElement) ui.confirmModalElement.classList.remove('hidden');
+        }
+
+        // Mostra a tela de login e esconde as outras
+        function showLoginView() {
+            if (ui.promoterSection) ui.promoterSection.classList.add('hidden');
+            if (ui.adminSection) ui.adminSection.classList.add('hidden');
+            if (ui.loginSection) ui.loginSection.classList.remove('hidden');
+            if (ui.appHeaderTitle) ui.appHeaderTitle.textContent = "Roteiro de Promotores";
+            if (ui.headerLogo) ui.headerLogo.classList.remove('hidden');
+            if (ui.usernameInput) ui.usernameInput.value = ""; 
+            if (ui.passwordInput) ui.passwordInput.value = "";
+        }
+
+        // Mostra a tela do promotor e esconde as outras
+        function showPromoterView() {
+            if (!currentUser) { showLoginView(); return; }
+            if (ui.loginSection) ui.loginSection.classList.add('hidden');
+            if (ui.adminSection) ui.adminSection.classList.add('hidden');
+            if (ui.promoterSection) ui.promoterSection.classList.remove('hidden');
+            if (ui.promoterNameDisplay) ui.promoterNameDisplay.textContent = `Bem-vindo(a), ${currentUser.displayName}!`;
+            if (ui.appHeaderTitle) ui.appHeaderTitle.textContent = `Roteiro de ${currentUser.displayName}`;
+
+            // Ajusta a visibilidade dos elementos com base nas permissões do utilizador
+            if (ui.adminViewButton) ui.adminViewButton.classList.toggle('hidden', !(currentUser.permissions.canManageUsers || currentUser.permissions.canViewExpenseReports));
+            if (ui.addStoreSection) ui.addStoreSection.classList.toggle('hidden', !currentUser.permissions.canModifySchedule);
+            if (ui.existingStoreContainer) ui.existingStoreContainer.classList.toggle('hidden', !currentUser.permissions.canModifySchedule);
+            if (ui.orSeparator) ui.orSeparator.classList.toggle('hidden', !currentUser.permissions.canModifySchedule);
+            
+            // PONTO 1: Controlar visibilidade do botão "Lançar Despesas do Dia"
+            if (ui.dailyExpensesButton) ui.dailyExpensesButton.classList.toggle('hidden', !currentUser.permissions.canLaunchExpenses); 
+
+            ui.daySelect.value = currentDayOfWeek; 
+            updateCurrentEffectiveDate(); 
+            renderStoresForPromoter(); 
+            populateExistingStoresDropdown();
+        }
+        
+        // Mostra a tela de administração e gerencia as abas
+        function showAdminView(tab = 'currentSchedule') {
+            if (!currentUser) { showLoginView(); return; }
+            if (ui.loginSection) ui.loginSection.classList.add('hidden');
+            if (ui.promoterSection) ui.promoterSection.classList.add('hidden');
+            if (ui.adminSection) ui.adminSection.classList.remove('hidden');
+            if (ui.appHeaderTitle) ui.appHeaderTitle.textContent = `Painel Coordenador/Admin`;
+
+            // Mostra ou esconde o botão "Minha Visão" com base no papel do utilizador
+            if (ui.backToPromoterViewButton) ui.backToPromoterViewButton.classList.toggle('hidden', !(currentUser.role === 'coordenador' || currentUser.role === 'lider_de_promotores' || currentUser.role === 'promotor' || currentUser.role === 'vendedor' || currentUser.role === 'outros')); 
+            
+            // Ajusta a visibilidade das abas do admin com base nas permissões
+            if (ui.manageUsersTab) ui.manageUsersTab.classList.toggle('hidden', !currentUser.permissions.canManageUsers);
+            if (ui.historyViewTab) ui.historyViewTab.classList.toggle('hidden', !currentUser.permissions.canViewExpenseReports);
+            if (ui.supplyReportViewTab) ui.supplyReportViewTab.classList.toggle('hidden', !currentUser.permissions.canViewExpenseReports);
+
+
+            const tabs = {
+                currentSchedule: { tab: ui.currentScheduleViewTab, view: ui.currentScheduleView },
+                history: { tab: ui.historyViewTab, view: ui.historyView },
+                supplyReport: { tab: ui.supplyReportViewTab, view: ui.supplyReportView },
+                manageUsers: { tab: ui.manageUsersTab, view: ui.manageUsersView } 
+            };
+
+            // Seleciona a aba padrão se a aba atual estiver escondida por permissão
+            let activeTab = tab;
+            if (tabs[activeTab] && tabs[activeTab].tab && tabs[activeTab].tab.classList.contains('hidden')) {
+                // Tenta encontrar uma aba visível para fallback
+                if (ui.currentScheduleViewTab && !ui.currentScheduleViewTab.classList.contains('hidden')) {
+                    activeTab = 'currentSchedule';
+                } else if (ui.historyViewTab && !ui.historyViewTab.classList.contains('hidden')) {
+                    activeTab = 'history';
+                } else if (ui.supplyReportViewTab && !ui.supplyReportViewTab.classList.contains('hidden')) {
+                    activeTab = 'supplyReport';
+                } else if (ui.manageUsersTab && !ui.manageUsersTab.classList.contains('hidden')) {
+                    activeTab = 'manageUsers';
+                } else {
+                    console.warn("Nenhuma aba visível para a visão de admin com base nas permissões.");
+                    return; 
+                }
+            }
+
+            // Ativa a aba selecionada e esconde as outras
+            Object.values(tabs).forEach(({ tab: t, view }) => {
+                if (t && view) { 
+                    const isActive = t.dataset.tab === activeTab;
+                    t.classList.toggle('bg-blue-500', isActive);
+                    t.classList.toggle('text-white', isActive);
+                    t.classList.toggle('text-blue-600', !isActive); 
+                    t.classList.toggle('hover:bg-blue-100', !isActive);
+                    view.classList.toggle('hidden', !isActive); 
+                }
+            });
+            
+            const today = new Date(); // Para preencher as datas do histórico
+
+            // Carrega os dados específicos para a aba ativa
+            if (activeTab === 'currentSchedule') {
+                populateAdminPromoterSelect(ui.adminPromoterSelect); 
+                loadAdminPromoterScheduleView(); 
+            } else if (activeTab === 'history') {
+                const oneMonthAgo = new Date(new Date().setMonth(today.getMonth() - 1));
+                if (ui.historyPromoterSelect) populateAdminPromoterSelect(ui.historyPromoterSelect); 
+                if (ui.historyEndDateInput) ui.historyEndDateInput.value = today.toISOString().split('T')[0];
+                if (ui.historyStartDateInput) ui.historyStartDateInput.value = oneMonthAgo.toISOString().split('T')[0];
+                if (ui.historyResultsList) ui.historyResultsList.innerHTML = '<li class="p-3 text-gray-500">Selecione um promotor e período, depois clique em "Carregar Histórico".</li>'; 
+            } else if (activeTab === 'supplyReport') {
+                if (ui.supplyReportPromoterSelect) populateAdminPromoterSelect(ui.supplyReportPromoterSelect); 
+                if (ui.supplyReportMonthSelect) populateMonthSelector(ui.supplyReportMonthSelect); 
+                if (ui.supplyReportResultsList) ui.supplyReportResultsList.innerHTML = '<p class="p-3 text-gray-500">Selecione os filtros e clique em "Carregar Relatório".</p>'; 
+                if (ui.downloadXlsxButton) ui.downloadXlsxButton.classList.add('hidden'); 
+            } else if (activeTab === 'manageUsers') {
+                renderManageUsersList();
+                populateAddUserRoleSelect();
+            }
+        }
+        
+        // Preenche o seletor de mês/ano para relatórios
+        function populateMonthSelector(selectElement) {
+            if (!selectElement) return; 
+            const months = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+            selectElement.innerHTML = '';
+            const currentYear = new Date().getFullYear();
+            
+            months.forEach((month, index) => {
+                const option = document.createElement('option');
+                option.value = `${currentYear}-${String(index + 1).padStart(2, '0')}`;
+                option.textContent = `${month} de ${currentYear}`;
+                selectElement.appendChild(option);
+            });
+            
+            selectElement.value = `${currentYear}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        // Lida com o logout do utilizador
+        function handleLogout() {
+            currentUser = null; 
+            currentPromoterData = null;
+            if (unsubscribeSchedule) { unsubscribeSchedule(); unsubscribeSchedule = null; } // Cancela o listener do schedule
+            showLoginView();
+        }
+
+        // --- Data Handling Functions ---
+        
+        // Carrega todos os dados dos promotores para o cache
+        async function loadAllPromotersDataForCache() {
+            try {
+                const promotersColRef = collection(db, `artifacts/${appId}/public/data/promoter_profiles`);
+                const querySnapshot = await getDocs(query(promotersColRef)); 
+                allPromotersCache = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                allPromotersCache.sort((a, b) => (a.displayName || a.id).localeCompare(b.displayName || b.id));
+                console.log("allPromotersCache carregado:", allPromotersCache);
+            } catch (error) {
+                console.error("Erro ao carregar promotores:", error);
+            }
+        }
+
+        // Carrega todas as lojas mestre para o cache
+        async function loadAllMasterStores() {
+            try {
+                const masterStoresColRef = collection(db, `artifacts/${appId}/public/data/master_stores`);
+                const querySnapshot = await getDocs(query(masterStoresColRef)); 
+                allMasterStores = querySnapshot.docs.map(d => ({ id: d.id, name: d.data().name }));
+                allMasterStores.sort((a, b) => a.name.localeCompare(b.name));
+                populateExistingStoresDropdown();
+                // Habilita os botões de adição de loja após carregar as lojas mestre
+                [ui.existingStoreSelect, ui.addExistingStoreButton, ui.addNewStoreButton].forEach(el => { if(el) el.disabled = false });
+                console.log("allMasterStores carregado:", allMasterStores);
+            } catch (error) {
+                console.error("Erro ao carregar lojas mestre:", error);
+            }
+        }
+        
+        // Preenche o dropdown de lojas existentes
+        function populateExistingStoresDropdown() {
+            if (!ui.existingStoreSelect) return;
+            ui.existingStoreSelect.innerHTML = '<option value="">-- Selecione uma Loja Existente --</option>';
+            allMasterStores.forEach(store => {
+                const option = document.createElement('option');
+                option.value = store.id;
+                option.textContent = store.name;
+                ui.existingStoreSelect.appendChild(option);
+            });
+        }
+
+        // Adiciona uma loja à agenda do promotor (sem abrir modal de registo, isso acontece ao registar visita)
+        async function addStoreToPromoterSchedule(storeName) {
+            if (!currentUser || !currentPromoterData?.permissions?.canModifySchedule) {
+                showModal("Não tem permissão para adicionar lojas.");
+                return;
+            }
+            const newStoreEntry = { id: crypto.randomUUID(), name: storeName, status: 'pending' }; 
+            const updatedSchedule = { ...(currentPromoterData.schedule || {}) };
+            updatedSchedule[currentDayOfWeek] = updatedSchedule[currentDayOfWeek] || [];
+            
+            if (updatedSchedule[currentDayOfWeek].some(s => s.name.toLowerCase() === storeName.toLowerCase())) {
+                showModal("Esta loja já está na sua agenda para este dia.");
+                return;
+            }
+            updatedSchedule[currentDayOfWeek].push(newStoreEntry);
+
+            try {
+                const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, currentUser.username);
+                await updateDoc(promoterDocRef, { schedule: updatedSchedule });
+                
+                currentPromoterData.schedule = updatedSchedule;
+                renderStoresForPromoter();
+                
+                // Loga a adição inicial da loja (estado pendente)
+                await logAttendanceChange(currentUser.username, currentUser.displayName, newStoreEntry, 'pending', currentEffectiveDate, currentDayOfWeek);
+                showModal(`Loja "${storeName}" adicionada à agenda para ${currentDayOfWeek}.`);
+            } catch (error) { 
+                console.error("Erro ao adicionar loja à agenda:", error); 
+                showModal("Não foi possível adicionar loja à agenda. Tente novamente.");
+            }
+
+            ui.newStoreInput.value = ''; 
+            ui.existingStoreSelect.value = ""; 
+        }
+
+        // Escuta mudanças no agendamento de um promotor em tempo real
+        function listenToPromoterScheduleChanges(promoterUsername) {
+            if (unsubscribeSchedule) unsubscribeSchedule(); 
+            const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, promoterUsername);
+            unsubscribeSchedule = onSnapshot(promoterDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    if(currentUser?.username === data.username) {
+                        currentPromoterData = data;
+                        renderStoresForPromoter();
+                    }
+                    const cacheIndex = allPromotersCache.findIndex(p => p.id === docSnap.id);
+                    if (cacheIndex > -1) {
+                        allPromotersCache[cacheIndex] = { id: docSnap.id, ...data };
+                        if (ui.adminSection && !ui.adminSection.classList.contains('hidden') && ui.adminPromoterSelect.value === promoterUsername) {
+                            renderAdminStoresForDay(allPromotersCache[cacheIndex], adminViewDays[adminViewCurrentDayIndex]);
+                        }
+                        if (ui.manageUsersList && !ui.manageUsersList.classList.contains('hidden')) { 
+                            renderManageUsersList(); 
+                        }
+                    }
+                }
+            });
+        }
+
+        // Abre o modal para editar o nome de uma loja
+        async function openEditStoreModal(storeIndex, storeData) {
+            if (!currentUser?.permissions?.canModifySchedule) {
+                showModal("Não tem permissão para editar lojas.");
+                return;
+            }
+            currentStoreForSupply = { index: storeIndex, storeData: storeData }; 
+            if (ui.editStoreNameInput) ui.editStoreNameInput.value = storeData.name;
+            if (ui.editStoreIndexHidden) ui.editStoreIndexHidden.value = storeIndex; 
+            if (ui.editStoreModal) ui.editStoreModal.classList.remove('hidden');
+            if (ui.editStoreNameInput) ui.editStoreNameInput.focus();
+        }
+        
+        // Guarda o nome editado da loja
+        async function saveEditedStoreName() {
+            if (!currentUser?.permissions?.canModifySchedule) {
+                showModal("Não tem permissão para guardar edições de lojas.");
+                return;
+            }
+            const newName = ui.editStoreNameInput.value.trim();
+            const storeIndex = parseInt(ui.editStoreIndexHidden.value, 10);
+
+            if (!newName) {
+                showModal("O nome da loja não pode ser vazio.");
+                return;
+            }
+
+            if (isNaN(storeIndex) || !currentPromoterData?.schedule?.[currentDayOfWeek]?.[storeIndex]) {
+                showModal("Erro: Loja inválida para edição.");
+                return;
+            }
+
+            const updatedSchedule = { ...currentPromoterData.schedule };
+            updatedSchedule[currentDayOfWeek][storeIndex].name = newName;
+
+            try {
+                const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, currentUser.username);
+                await updateDoc(promoterDocRef, { schedule: updatedSchedule });
+
+                currentPromoterData.schedule = updatedSchedule; 
+                renderStoresForPromoter(); 
+                if (ui.editStoreModal) ui.editStoreModal.classList.add('hidden');
+                showModal(`Nome da loja atualizado para "${newName}".`);
+            } catch (error) {
+                console.error("Erro ao guardar nome da loja editado:", error);
+                showModal("Não foi possível guardar a edição do nome da loja. Tente novamente.");
+            }
+        }
+
+        // --- Admin Functions ---
+
+        // Preenche o seletor de promotores na visão de admin
+        function populateAdminPromoterSelect(selectElement) {
+            if (!selectElement) return;
+            const currentValue = selectElement.value; 
+            selectElement.innerHTML = '<option value="">-- Todos os Promotores --</option>';
+            allPromotersCache
+              .filter(p => p.role !== 'superadmin') 
+              .forEach(promoter => {
+                const option = document.createElement('option');
+                option.value = promoter.username;
+                option.textContent = promoter.displayName || promoter.username;
+                selectElement.appendChild(option);
+            });
+            if (currentValue) selectElement.value = currentValue; 
+        }
+
+        // Define o valor padrão para o campo de função ao adicionar novo utilizador
+        function populateAddUserRoleSelect() {
+            // Removido o preenchimento automático do valor, agora apenas o placeholder define o exemplo.
+            // O input type="text" já permite digitar.
+            // O placeholder será definido no HTML.
+        }
+
+        // Adiciona um novo utilizador
+        async function addNewUser() {
+            if (!currentUser?.permissions?.canManageUsers) {
+                showModal("Não tem permissão para adicionar novos utilizadores.");
+                return;
+            }
+            const username = ui.newUserInput.value.trim().toLowerCase();
+            const displayName = ui.newUserDisplayNameInput.value.trim();
+            const password = ui.newUserPasswordInput.value.trim();
+            const role = ui.addUserRoleInput.value.trim().toLowerCase(); 
+            const canViewExpenseReports = ui.addUserCanViewExpenses.checked;
+            const canModifySchedule = ui.addUserCanModifySchedule.checked;
+            const canManageUsers = ui.addUserCanManageUsers.checked;
+            const canLaunchExpenses = ui.addUserCanLaunchExpenses.checked; // PONTO 1: Nova permissão
+
+            if (!username || !displayName || !password || !role) {
+                showModal("Por favor, preencha todos os campos do novo utilizador.");
+                return;
+            }
+
+            try {
+                const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, username);
+                const docSnap = await getDoc(promoterDocRef);
+
+                if (docSnap.exists()) {
+                    showModal(`Utilizador "${username}" já existe. Por favor, escolha outro nome de utilizador.`);
+                    return;
+                }
+
+                await setDoc(promoterDocRef, {
+                    username: username,
+                    displayName: displayName,
+                    password: password, 
+                    role: role,
+                    permissions: {
+                        canViewExpenseReports: canViewExpenseReports,
+                        canModifySchedule: canModifySchedule,
+                        canManageUsers: canManageUsers,
+                        canLaunchExpenses: canLaunchExpenses // PONTO 1: Guarda a permissão
+                    },
+                    schedule: { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [] }
+                });
+                showModal(`Utilizador "${displayName}" (${username}) adicionado com sucesso!`);
+                if (ui.addNewUserForm) ui.addNewUserForm.reset(); 
+                await loadAllPromotersDataForCache(); 
+                renderManageUsersList(); 
+            } catch (error) {
+                console.error("Erro ao adicionar novo utilizador:", error);
+                showModal(`Erro ao adicionar utilizador: ${error.message}.`);
+            }
+        }
+
+        // Renderiza a lista de utilizadores na visão de gerenciamento de utilizadores
+        async function renderManageUsersList() {
+            if (!ui.manageUsersList) return;
+            ui.manageUsersList.innerHTML = ''; 
+            
+            const users = allPromotersCache.filter(p => p.role !== 'superadmin'); 
+
+            if (users.length === 0) {
+                ui.manageUsersList.innerHTML = '<li class="p-3 text-gray-500">Nenhum utilizador para gerir.</li>';
+                return;
+            }
+
+            users.forEach(user => {
+                const li = document.createElement('li');
+                li.className = 'flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 mb-2 rounded-lg shadow-sm bg-blue-50';
+                
+                // PONTO 1: Adiciona a permissão de Lançar Despesas ao texto de permissões
+                const permissionsText = `
+                    <span class="text-xs font-semibold text-gray-600">Função: ${user.role.replace('_', ' ').toUpperCase()}</span><br>
+                    <span class="text-xs text-gray-500">Relatórios: ${user.permissions?.canViewExpenseReports ? 'Sim' : 'Não'}</span>
+                    <span class="text-xs text-gray-500"> | Agenda: ${user.permissions?.canModifySchedule ? 'Sim' : 'Não'}</span>
+                    <span class="text-xs text-gray-500"> | Gerir: ${user.permissions?.canManageUsers ? 'Sim' : 'Não'}</span>
+                    <span class="text-xs text-gray-500"> | Despesas: ${user.permissions?.canLaunchExpenses ? 'Sim' : 'Não'}</span>
+                `;
+
+                li.innerHTML = `
+                    <div class="flex-grow">
+                        <span class="font-semibold text-slate-800">${user.displayName} (${user.username})</span>
+                        <div class="mt-1">${permissionsText}</div>
+                    </div>
+                `;
+
+                const buttonsDiv = document.createElement('div');
+                buttonsDiv.className = 'flex-shrink-0 mt-2 sm:mt-0 space-x-2';
+
+                const editBtn = createStoreActionButton('Editar', 'bg-blue-500 hover:bg-blue-600', () => openEditUserModal(user));
+                const deleteBtn = createStoreActionButton('Remover', 'bg-red-600 hover:bg-red-700', () => {
+                    showConfirmModal(`Tem a certeza que deseja remover o utilizador "${user.displayName}"?`, 
+                        () => deleteUser(user.username)
+                    );
+                });
+
+                buttonsDiv.appendChild(editBtn);
+                buttonsDiv.appendChild(deleteBtn);
+                
+                li.appendChild(buttonsDiv); // ANEXA A DIV DE BOTÕES AO ITEM DA LISTA
+                if (ui.manageUsersList) ui.manageUsersList.appendChild(li); 
+            });
+        }
+
+        // Abre o modal para editar um utilizador
+        async function openEditUserModal(user) {
+            if (!currentUser?.permissions?.canManageUsers) {
+                showModal("Não tem permissão para editar utilizadores.");
+                return;
+            }
+            populateAddUserRoleSelect(); 
+            
+            if (ui.editUserUsernameDisplay) ui.editUserUsernameDisplay.textContent = user.username;
+            if (ui.editUserDisplayNameInput) ui.editUserDisplayNameInput.value = user.displayName;
+            if (ui.editUserPasswordInput) ui.editUserPasswordInput.value = ''; 
+            if (ui.editUserRoleInput) ui.editUserRoleInput.value = user.role; 
+            if (ui.editUserCanViewExpenses) ui.editUserCanViewExpenses.checked = user.permissions?.canViewExpenseReports || false;
+            if (ui.editUserCanModifySchedule) ui.editUserCanModifySchedule.checked = user.permissions?.canModifySchedule || false;
+            if (ui.editUserCanManageUsers) ui.editUserCanManageUsers.checked = user.permissions?.canManageUsers || false;
+            if (ui.editUserCanLaunchExpenses) ui.editUserCanLaunchExpenses.checked = user.permissions?.canLaunchExpenses || false; // PONTO 1: Seta o estado do checkbox
+
+            if (ui.editUserModal) ui.editUserModal.classList.remove('hidden');
+        }
+
+        // Guarda as edições de um utilizador
+        async function saveEditedUser() {
+            if (!currentUser?.permissions?.canManageUsers) {
+                showModal("Não tem permissão para guardar edições de utilizadores.");
+                return;;
+            }
+            const username = ui.editUserUsernameDisplay.textContent.trim().toLowerCase();
+            const displayName = ui.editUserDisplayNameInput.value.trim();
+            const password = ui.editUserPasswordInput.value.trim();
+            const role = ui.editUserRoleInput.value.trim().toLowerCase(); 
+            const canViewExpenseReports = ui.editUserCanViewExpenses.checked;
+            const canModifySchedule = ui.editUserCanModifySchedule.checked;
+            const canManageUsers = ui.editUserCanManageUsers.checked;
+            const canLaunchExpenses = ui.editUserCanLaunchExpenses.checked; // PONTO 1: Pega o valor da nova permissão
+
+            if (!displayName || !role) {
+                showModal("Nome de exibição e função são obrigatórios.");
+                return;
+            }
+
+            try {
+                const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, username);
+                const updateData = {
+                    displayName: displayName,
+                    role: role,
+                    permissions: {
+                        canViewExpenseReports: canViewExpenseReports,
+                        canModifySchedule: canModifySchedule,
+                        canManageUsers: canManageUsers,
+                        canLaunchExpenses: canLaunchExpenses // PONTO 1: Guarda a permissão
+                    }
+                };
+                if (password) { 
+                    updateData.password = password; 
+                }
+
+                await updateDoc(promoterDocRef, updateData);
+                showModal(`Utilizador "${displayName}" atualizado com sucesso!`);
+                if (ui.editUserModal) ui.editUserModal.classList.add('hidden');
+                await loadAllPromotersDataForCache(); 
+                renderManageUsersList(); 
+            } catch (error) {
+                console.error("Erro ao guardar utilizador editado:", error);
+                showModal(`Erro ao guardar utilizador: ${error.message}.`);
+            }
+        }
+
+        // Remove um utilizador
+        async function deleteUser(username) {
+            if (!currentUser?.permissions?.canManageUsers) {
+                showModal("Não tem permissão para remover utilizadores.");
+                return;
+            }
+            try {
+                const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, username);
+                await deleteDoc(promoterDocRef);
+                showModal(`Utilizador "${username}" removido com sucesso.`);
+                await loadAllPromotersDataForCache(); 
+                renderManageUsersList(); 
+            } catch (error) {
+                console.error("Erro ao remover utilizador:", error);
+                showModal(`Erro ao remover utilizador: ${error.message}.`);
+            }
+        }
+
+
+        // Carrega e renderiza o agendamento de um promotor na visão de admin
+        function loadAdminPromoterScheduleView() {
+            const selectedPromoterUsername = ui.adminPromoterSelect.value;
+            if (!selectedPromoterUsername) {
+                if (ui.adminStoresList) ui.adminStoresList.innerHTML = '<li class="p-3 text-gray-500">Selecione um promotor para ver o roteiro.</li>'; 
+                return;
+            }
+            const promoterData = allPromotersCache.find(p => p.username === selectedPromoterUsername);
+            if (promoterData?.schedule) {
+                renderAdminStoresForDay(promoterData, adminViewDays[adminViewCurrentDayIndex]);
+            } else {
+                if (ui.adminStoresList) ui.adminStoresList.innerHTML = `<li class="p-3 text-gray-500">Sem roteiro para este promotor.</li>`; 
+            }
+        }
+        
+        // Renderiza as lojas para um dia específico na visão de admin
+        function renderAdminStoresForDay(promoterData, dayKey) {
+            const dayNames = { monday: "Segunda", tuesday: "Terça", wednesday: "Quarta", thursday: "Quinta", friday: "Sexta", saturday: "Sábado"};
+            if (ui.adminSelectedDayDisplay) ui.adminSelectedDayDisplay.textContent = `Dia: ${dayNames[dayKey]}`; 
+            const storesForDay = promoterData.schedule[dayKey] || [];
+            ui.adminStoresList.innerHTML = storesForDay.length === 0 ? '<li class="p-3 text-gray-500">Nenhuma loja para este dia.</li>' : ''; 
+
+            storesForDay.forEach((store, index) => {
+                const li = document.createElement('li');
+                const isAttended = store.status === 'attended';
+                li.className = `p-3 mb-2 rounded-lg shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center ${isAttended ? 'bg-green-100' : 'bg-yellow-100'}`;
+                
+                let storeInfoHTML = `<div class="flex-grow">
+                    <span class="font-semibold text-slate-800">${store.name}</span>`;
+                if (store.attendedTimestamp) {
+                    const attendedDate = store.attendedTimestamp.toDate();
+                    storeInfoHTML += `<span class="text-xs text-gray-500 block">Atendida em: ${attendedDate.toLocaleString('pt-BR')}</span>`;
+                }
+                if (store.location) {
+                    storeInfoHTML += `<a href="https://www.google.com/maps/search/?api=1&query=${store.location.latitude},${store.location.longitude}" target="_blank" class="text-xs text-blue-500 hover:underline block">Ver Localização no Mapa</a>`;
+                }
+                storeInfoHTML += '</div>';
+                li.innerHTML = storeInfoHTML; 
+
+                const buttonsDiv = document.createElement('div'); 
+                buttonsDiv.className = 'space-x-2 flex-shrink-0 mt-2 sm:mt-0';
+                
+                // Botões de estado e exclusão
+                const attendedBtn = createStoreActionButton('Atendida', `bg-green-500 hover:bg-green-600 ${isAttended ? 'opacity-50 cursor-not-allowed' : ''}`, () => {
+                    if (!isAttended) adminUpdateStoreStatus(promoterData.username, dayKey, index, 'attended');
+                });
+                attendedBtn.disabled = isAttended; 
+
+                const notAttendedBtn = createStoreActionButton('Não Atendida', `bg-yellow-500 hover:bg-yellow-600 ${!isAttended ? 'opacity-50 cursor-not-allowed' : ''}`, () => {
+                    if (isAttended) adminUpdateStoreStatus(promoterData.username, dayKey, index, 'pending');
+                });
+                notAttendedBtn.disabled = !isAttended; 
+                
+                const deleteBtn = createStoreActionButton('Excluir', 'bg-red-600 hover:bg-red-700', () => {
+                     showConfirmModal(`Tem a certeza que deseja remover a loja "${store.name}" do roteiro de ${promoterData.displayName}?`, 
+                         () => adminRemoveStore(promoterData.username, dayKey, index)
+                     );
+                });
+                
+                buttonsDiv.appendChild(attendedBtn);
+                buttonsDiv.appendChild(notAttendedBtn);
+                buttonsDiv.appendChild(deleteBtn);
+                
+                li.appendChild(buttonsDiv); 
+                if (ui.adminStoresList) ui.adminStoresList.appendChild(li); 
+            });
+        }
+        
+        // Atualiza o estado de atendimento de uma loja na visão de admin
+        async function adminUpdateStoreStatus(promoterUsername, dayKey, storeIndex, newStatus) {
+            const promoterData = allPromotersCache.find(p => p.username === promoterUsername);
+            if (!promoterData || !promoterData.schedule?.[dayKey]?.[storeIndex]) return;
+
+            const targetSchedule = { ...promoterData.schedule };
+            const storeToUpdate = targetSchedule[dayKey][storeIndex];
+
+            if (storeToUpdate.status === newStatus) return; 
+
+            storeToUpdate.status = newStatus;
+            if (newStatus === 'attended') {
+                storeToUpdate.attendedTimestamp = Timestamp.now();
+                delete storeToUpdate.location; 
+            } else { 
+                delete storeToUpdate.attendedTimestamp;
+                delete storeToUpdate.location; 
+            }
+
+            try {
+                const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, promoterUsername);
+                await updateDoc(promoterDocRef, { schedule: targetSchedule });
+
+                promoterData.schedule = targetSchedule; 
+                renderAdminStoresForDay(promoterData, dayKey); 
+
+                // Loga a mudança de estado da loja
+                await logAttendanceChange(promoterUsername, promoterData.displayName, storeToUpdate, newStatus, getCalendarDateForSelectedDay(dayKey));
+                showModal(`Estado da loja ${storeToUpdate.name} atualizado para "${newStatus}".`);
+            } catch (error) {
+                console.error("Erro ao atualizar estado (admin):", error);
+                showModal("Não foi possível atualizar o estado da loja.");
+            }
+        }
+
+        // Remove uma loja do agendamento na visão de admin
+        async function adminRemoveStore(promoterUsername, dayKey, storeIndex) {
+            const promoterData = allPromotersCache.find(p => p.username === promoterUsername);
+            if (!promoterData || !promoterData.schedule?.[dayKey]?.[storeIndex]) return;
+
+            const targetSchedule = { ...promoterData.schedule };
+            const removedStore = targetSchedule[dayKey].splice(storeIndex, 1)[0]; 
+
+            try {
+                const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, promoterUsername);
+                await updateDoc(promoterDocRef, { schedule: targetSchedule });
+                
+                promoterData.schedule = targetSchedule; 
+                loadAdminPromoterScheduleView(); 
+
+                showModal(`Loja "${removedStore.name}" removida com sucesso.`);
+            } catch (error) {
+                console.error("Erro ao remover loja (admin):", error);
+                showModal("Não foi possível remover a loja.");
+            }
+        }
+        
+        // Loga as mudanças de estado de atendimento das lojas
+        async function logAttendanceChange(promoterUsername, promoterDisplayName, store, status, effectiveDate, dayOfWeek, location = null) {
+            try {
+                const logData = {
+                    storeId: store.id, 
+                    storeName: store.name,
+                    status: status, 
+                    logTimestamp: serverTimestamp(), 
+                    effectiveDate: effectiveDate, 
+                    dayOfWeek: dayOfWeek, 
+                    promoterUsername: promoterUsername,
+                    promoterDisplayName: promoterDisplayName,
+                    region: store.region || '', 
+                    comment: store.comment || '' 
+                };
+                if (location) logData.location = location; 
+
+                const logCollectionRef = collection(db, `artifacts/${appId}/public/data/attendance_logs/${promoterUsername}/entries`);
+                await addDoc(logCollectionRef, logData);
+            } catch (error) {
+                console.error("Erro ao guardar log de presença:", error);
+            }
+        }
+
+        // --- Modals & Registration ---
+
+        // Abre o modal de detalhes iniciais da loja (região, comentário, localização fixa)
+        function openInitialStoreDetailsModal(storeIndex, storeData) {
+            currentStoreForInitialRegistration = { index: storeIndex, storeData: storeData }; 
+            if (ui.initialStoreDetailsModalTitle) ui.initialStoreDetailsModalTitle.textContent = `Registar Detalhes da Loja: ${storeData.name}`;
+            if (ui.initialStoreRegionInput) ui.initialStoreRegionInput.value = storeData.region || '';
+            if (ui.initialStoreCommentInput) ui.initialStoreCommentInput.value = storeData.comment || '';
+            if (ui.initialStoreLocationLink) ui.initialStoreLocationLink.classList.add('hidden');
+            if (ui.initialStoreLocationStatus) ui.initialStoreLocationStatus.textContent = 'A obter localização...';
+
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const latitude = position.coords.latitude;
+                        const longitude = position.coords.longitude;
+                        ui.initialStoreLocationStatus.textContent = 'Localização obtida!';
+                        ui.initialStoreLocationLink.href = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+                        ui.initialStoreLocationLink.textContent = `Ver Localização no Mapa (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
+                        ui.initialStoreLocationLink.classList.remove('hidden');
+                        ui.initialStoreLocationLink.dataset.latitude = latitude;
+                        ui.initialStoreLocationLink.dataset.longitude = longitude;
+                    },
+                    (error) => {
+                        let message = "Não foi possível obter a sua localização. ";
+                        switch (error.code) {
+                            case error.PERMISSION_DENIED: message += "Permissão negada."; break;
+                            case error.POSITION_UNAVAILABLE: message += "Informação indisponível."; break;
+                            case error.TIMEOUT: message += "Tempo esgotado."; break;
+                            default: message += "Erro desconhecido."; break;
+                        }
+                        ui.initialStoreLocationStatus.textContent = message + " Por favor, ative a localização no seu dispositivo.";
+                        ui.initialStoreLocationLink.classList.add('hidden');
+                        ui.initialStoreLocationLink.dataset.latitude = ''; 
+                        ui.initialStoreLocationLink.dataset.longitude = ''; 
+                    },
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 } 
+                );
+            } else {
+                ui.initialStoreLocationStatus.textContent = 'Geolocalização não é suportada pelo seu navegador.';
+                ui.initialStoreLocationLink.classList.add('hidden');
+                ui.initialStoreLocationLink.dataset.latitude = '';
+                ui.initialStoreLocationLink.dataset.longitude = '';
+            }
+
+            if (ui.initialStoreDetailsModal) ui.initialStoreDetailsModal.classList.remove('hidden');
+        }
+
+        // Confirma os detalhes iniciais da loja (região, comentário, localização fixa)
+        async function confirmInitialStoreDetails() {
+            if (!currentUser?.permissions?.canModifySchedule) {
+                showModal("Não tem permissão para registar detalhes da loja.");
+                return;
+            }
+
+            const index = currentStoreForInitialRegistration.index;
+            const storeData = currentStoreForInitialRegistration.storeData;
+            const region = ui.initialStoreRegionInput.value.trim();
+            const comment = ui.initialStoreCommentInput.value.trim();
+            const latitude = ui.initialStoreLocationLink.dataset.latitude;
+            const longitude = ui.initialStoreLocationLink.dataset.longitude;
+
+            if (!region) {
+                showModal("Por favor, preencha o campo 'Região de Atendimento da Loja'.");
+                return;
+            }
+            
+            const updatedSchedule = { ...currentPromoterData.schedule };
+            const storeToUpdate = updatedSchedule[currentDayOfWeek][index];
+
+            storeToUpdate.region = region;
+            storeToUpdate.comment = comment;
+            if (latitude && longitude) {
+                storeToUpdate.location = { latitude: parseFloat(latitude), longitude: parseFloat(longitude) };
+            } else {
+                delete storeToUpdate.location;
+            }
+
+            try {
+                const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, currentUser.username);
+                await updateDoc(promoterDocRef, { schedule: updatedSchedule });
+                
+                currentPromoterData.schedule = updatedSchedule; 
+                renderStoresForPromoter(); 
+                
+                showModal(`Detalhes da loja "${storeData.name}" registados com sucesso!`);
+                if (ui.initialStoreDetailsModal) ui.initialStoreDetailsModal.classList.add('hidden');
+
+                // PONTO 2: Se o utilizador NÃO for vendedor, finalize o registo da visita aqui,
+                // sem abrir o segundo modal de vendas.
+                if (currentUser && currentUser.role !== 'vendedor') {
+                    storeToUpdate.status = 'attended';
+                    storeToUpdate.attendedTimestamp = Timestamp.now(); 
+                    // Logamos a presença com a localização fixa da loja
+                    await logAttendanceChange(currentUser.username, currentUser.displayName, storeToUpdate, 'attended', currentEffectiveDate, currentDayOfWeek, storeToUpdate.location);
+                    // Não há vendas a registar para não-vendedores
+                    showModal(`Visita à loja ${storeData.name} registada com sucesso!`);
+                } else {
+                    // Se for vendedor, procede para abrir o modal de suprimento (com vendas)
+                    openSupplyModal(index, storeToUpdate);
+                }
+
+            } catch (error) {
+                console.error("Erro ao registar detalhes iniciais da loja:", error);
+                showModal(`Erro ao registar detalhes da loja: ${error.message}.`);
+            }
+        }
+
+
+        // Abre o modal de registo de visita/suprimento
+        function openSupplyModal(storeIndex, storeData) {
+            if (!currentUser?.permissions?.canModifySchedule) {
+                showModal("Não tem permissão para registar visitas.");
+                return;
+            }
+
+            // PONTO 2: Se a região ou localização fixa não estiverem definidas, abre o modal de detalhes iniciais.
+            // Isso acontece se o promotor clicar em "Registar Visita" e os detalhes fixos ainda não existirem.
+            if (!storeData.region || !storeData.location) {
+                openInitialStoreDetailsModal(storeIndex, storeData);
+                return; 
+            }
+
+            // Se os detalhes iniciais já estiverem presentes, procede com o modal de suprimento
+            currentStoreForSupply = { index: storeIndex, storeData: storeData };
+            if (ui.supplyModalTitle) ui.supplyModalTitle.textContent = `Registar Visita: ${storeData.name}`;
+            if (ui.boxesSuppliedInput) ui.boxesSuppliedInput.value = '';
+            // Preenche a região e o comentário com os dados fixos da loja
+            if (ui.storeRegionInput) ui.storeRegionInput.value = storeData.region || ''; 
+            if (ui.storeCommentInput) ui.storeCommentInput.value = storeData.comment || ''; 
+
+            // PONTO 1: Lógica para mostrar/ocultar o campo de vendas com base no papel do utilizador
+            const boxesSuppliedInputGroup = ui.boxesSuppliedInput.closest('div'); // Pega o div pai do input de caixas
+            if (currentUser && currentUser.role === 'vendedor') {
+                boxesSuppliedInputGroup.classList.remove('hidden');
+                if (ui.boxesSuppliedInput) ui.boxesSuppliedInput.setAttribute('required', 'true');
+            } else {
+                boxesSuppliedInputGroup.classList.add('hidden');
+                if (ui.boxesSuppliedInput) ui.boxesSuppliedInput.removeAttribute('required');
+                if (ui.boxesSuppliedInput) ui.boxesSuppliedInput.value = ''; // Garante que o valor esteja limpo
+            }
+
+            if (ui.supplyModal) ui.supplyModal.classList.remove('hidden');
+            if (ui.boxesSuppliedInput && currentUser && currentUser.role === 'vendedor') {
+                 ui.boxesSuppliedInput.focus(); // Foca no campo de venda se for vendedor
+            } else if (ui.storeRegionInput) {
+                ui.storeRegionInput.focus(); // Caso contrário, foca na região
+            }
+        }
+
+        // Submete os dados de suprimento e regista a visita
+        async function submitSupplyAndRegisterVisit(storeIndex, storeData, boxesSupplied, region, comment) {
+            if (!currentUser?.permissions?.canModifySchedule) {
+                showModal("Não tem permissão para registar visitas.");
+                return;
+            }
+            showModal("A capturar localização e a registar...");
+            if (!navigator.geolocation) {
+                showModal("Geolocalização não é suportada. Visita não registada.");
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const capturedLocation = {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude
+                    };
+                    
+                    try {
+                        const schedule = { ...currentPromoterData.schedule };
+                        if (schedule[currentDayOfWeek]?.[storeIndex]) {
+                            const storeToUpdate = schedule[currentDayOfWeek][storeIndex];
+                            storeToUpdate.status = 'attended';
+                            // A localização da visita é a capturada agora (pode ser diferente da localização fixa da loja)
+                            storeToUpdate.lastVisitLocation = capturedLocation; 
+                            storeToUpdate.attendedTimestamp = Timestamp.now(); 
+                            // Adiciona região e comentário (já devem estar preenchidos do registo inicial)
+                            storeToUpdate.region = region;
+                            storeToUpdate.comment = comment;
+
+                            const promoterDocRef = doc(db, `artifacts/${appId}/public/data/promoter_profiles`, currentUser.username);
+                            await updateDoc(promoterDocRef, { schedule });
+
+                            // Loga a presença e o suprimento com a localização da visita
+                            await logAttendanceChange(currentUser.username, currentUser.displayName, storeToUpdate, 'attended', currentEffectiveDate, currentDayOfWeek, capturedLocation);
+                            await logSupply(currentUser.username, currentUser.displayName, storeToUpdate.name, boxesSupplied, region, currentEffectiveDate, comment);
+
+                            showModal(`Visita à loja ${storeData.name} registada com sucesso!`);
+                        }
+                    } catch (error) {
+                        console.error("Erro ao registar visita:", error);
+                        showModal(`Erro ao registar visita: ${error.message}.`);
+                    }
+                },
+                (error) => {
+                    let message = "Não foi possível obter a sua localização. ";
+                    switch (error.code) {
+                        case error.PERMISSION_DENIED: message += "Permissão negada."; break;
+                        case error.POSITION_UNAVAILABLE: message += "Informação indisponível."; break;
+                        case error.TIMEOUT: message += "Tempo esgotado."; break;
+                        default: message += "Erro desconhecido."; break;
+                    }
+                    showModal(message + " Por favor, verifique as permissões do seu navegador/telemóvel.");
+                },
+                { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+            );
+        }
+
+        // Loga os dados de suprimento
+        async function logSupply(promoterUsername, promoterDisplayName, storeName, boxesSupplied, region, effectiveDate, comment) {
+            try {
+                const logData = {
+                    promoterUsername, promoterDisplayName, storeName, boxesSupplied, 
+                    region, 
+                    comment, 
+                    date: effectiveDate, 
+                    logTimestamp: serverTimestamp()
+                };
+                const logCollectionRef = collection(db, `artifacts/${appId}/public/data/supply_logs`);
+                await addDoc(logCollectionRef, logData);
+            } catch (error) {
+                console.error("Erro ao guardar log de suprimento:", error);
+            }
+        }
+        
+        // Abre o modal para lançar despesas diárias
+        async function openDailyExpensesModal() {
+            // PONTO 1: Permissão para lançar despesas agora é controlada pela permissão `canLaunchExpenses`
+            if (!currentUser?.permissions?.canLaunchExpenses) { 
+                showModal("Não tem permissão para lançar despesas.");
+                return;
+            }
+            if (ui.dailyExpensesDate) ui.dailyExpensesDate.textContent = `Despesas para: ${currentEffectiveDate}`;
+            if (ui.dailyExpensesForm) ui.dailyExpensesForm.reset(); 
+            const docId = `${currentUser.username}_${currentEffectiveDate}`;
+            const expenseDocRef = doc(db, `artifacts/${appId}/public/data/daily_expenses`, docId);
+            try {
+                const docSnap = await getDoc(expenseDocRef);
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    if (ui.kmInitialInput) ui.kmInitialInput.value = data.kmInitial || '';
+                    if (ui.kmFinalInput) ui.kmFinalInput.value = data.kmFinal || '';
+                    if (ui.fuelInput) ui.fuelInput.value = data.fuel || '';
+                    if (ui.mealsInput) ui.mealsInput.value = data.meals || '';
+                    if (ui.hotelInput) ui.hotelInput.value = data.hotel || '';
+                    if (ui.transportInput) ui.transportInput.value = data.transport || '';
+                    if (ui.otherExpensesInput) ui.otherExpensesInput.value = data.otherExpenses || '';
+                    if (ui.expenseCommentInput) ui.expenseCommentInput.value = data.expenseComment || '';
+                }
+            } catch(error) {
+                console.error("Erro ao buscar despesas diárias:", error);
+            }
+            if (ui.dailyExpensesModal) ui.dailyExpensesModal.classList.remove('hidden');
+        }
+
+        // Salva as despesas diárias
+        async function saveDailyExpenses() {
+            // PONTO 1: Permissão para lançar despesas agora é controlada pela permissão `canLaunchExpenses`
+            if (!currentUser?.permissions?.canLaunchExpenses) { 
+                showModal("Não tem permissão para guardar despesas.");
+                return;
+            }
+            const expenseData = {
+                promoterUsername: currentUser.username,
+                date: currentEffectiveDate,
+                kmInitial: ui.kmInitialInput.value ? Number(ui.kmInitialInput.value) : 0,
+                kmFinal: ui.kmFinalInput.value ? Number(ui.kmFinalInput.value) : 0,
+                fuel: ui.fuelInput.value ? Number(ui.fuelInput.value) : 0,
+                meals: ui.mealsInput.value ? Number(ui.mealsInput.value) : 0,
+                hotel: ui.hotelInput.value ? Number(ui.hotelInput.value) : 0,
+                transport: ui.transportInput.value ? Number(ui.transportInput.value) : 0,
+                otherExpenses: ui.otherExpensesInput.value ? Number(ui.otherExpensesInput.value) : 0,
+                expenseComment: ui.expenseCommentInput.value.trim(),
+                lastUpdated: serverTimestamp() 
+            };
+
+            const docId = `${currentUser.username}_${currentEffectiveDate}`;
+            const expenseDocRef = doc(db, `artifacts/${appId}/public/data/daily_expenses`, docId);
+            try {
+                await setDoc(expenseDocRef, expenseData, { merge: true });
+                showModal("Despesas do dia guardadas com sucesso!");
+                if (ui.dailyExpensesModal) ui.dailyExpensesModal.classList.add('hidden');
+            } catch(error) {
+                console.error("Erro ao guardar despesas diárias:", error);
+                showModal("Erro ao guardar despesas. Tente novamente.");
+            }
+        }
+
+        // --- History & Reports Functions ---
+        // Carrega o histórico de visitas
+        async function loadHistory() {
+            if (!currentUser?.permissions?.canViewExpenseReports) {
+                showModal("Não tem permissão para visualizar relatórios de histórico.");
+                return;
+            }
+            const promoter = ui.historyPromoterSelect.value;
+            const startDate = ui.historyStartDateInput.value;
+            const endDate = ui.historyEndDateInput.value;
+
+            if (!startDate || !endDate) {
+                showModal("Por favor, selecione as datas de início e fim.");
+                return;
+            }
+            if (ui.historyResultsList) ui.historyResultsList.innerHTML = '<li>A carregar...</li>';
+            
+            try {
+                let allLogs = [];
+                const promotersToQuery = promoter ? [allPromotersCache.find(p => p.username === promoter)] : allPromotersCache.filter(pr => pr.role !== 'superadmin');
+
+                for(const p of promotersToQuery) {
+                    if(!p) continue;
+                    const promoterLogsRef = collection(db, `artifacts/${appId}/public/data/attendance_logs/${p.username}/entries`);
+                    const q = query(promoterLogsRef, where('effectiveDate', '>=', startDate), where('effectiveDate', '<=', endDate));
+                    const querySnapshot = await getDocs(q);
+                    querySnapshot.forEach(doc => allLogs.push(doc.data()));
+                }
+                
+                allLogs.sort((a,b) => (b.logTimestamp?.toMillis() || 0) - (a.logTimestamp?.toMillis() || 0));
+                renderHistoryResults(allLogs);
+            } catch (error) {
+                console.error("Erro ao carregar histórico:", error);
+                if (ui.historyResultsList) ui.historyResultsList.innerHTML = `<li class="p-3 text-red-500">Erro ao carregar. Detalhes: ${error.message}</li>`;
+            }
+        }
+
+        // Renderiza os resultados do histórico de visitas
+        function renderHistoryResults(logs) {
+            if (!ui.historyResultsList) return; 
+            if (logs.length === 0) {
+                ui.historyResultsList.innerHTML = '<li class="p-3 text-gray-500">Nenhum registo encontrado para o período selecionado.</li>';
+                return;
+            }
+            ui.historyResultsList.innerHTML = logs.map(log => {
+                const attended = log.status === 'attended';
+                const timestamp = log.logTimestamp?.toDate();
+                const regionInfo = log.region ? `<p class="text-xs text-gray-500">Região: ${log.region}</p>` : '';
+                const commentInfo = log.comment ? `<p class="text-xs text-gray-500">Comentário: ${log.comment}</p>` : '';
+                const locationLink = (log.location && log.location.latitude && log.location.longitude) ? 
+                    `<a href="https://www.google.com/maps/search/?api=1&query=${log.location.latitude},${log.location.longitude}" target="_blank" class="text-xs text-blue-500 hover:underline block">Localização</a>` : '';
+
+                return `
+                    <li class="p-3 mb-2 rounded-lg shadow-sm ${attended ? 'bg-green-50' : 'bg-red-50'}">
+                        <div class="flex justify-between items-center">
+                            <span class="font-semibold ${attended ? 'text-green-800' : 'text-red-800'}">${log.storeName}</span>
+                            <span class="text-xs font-bold px-2 py-1 rounded-full ${attended ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}">${attended ? 'VISITADO' : 'PENDENTE'}</span>
+                        </div>
+                        <p class="text-sm text-gray-600">Promotor: ${log.promoterDisplayName}</p>
+                        <p class="text-xs text-gray-500">Data da Rota: ${log.effectiveDate}</p>
+                        ${timestamp ? `<p class="text-xs text-gray-500">Data do Registo: ${timestamp.toLocaleString('pt-BR')}</p>` : ''}
+                        ${regionInfo}
+                        ${commentInfo}
+                        ${locationLink}
+                    </li>
+                `;
+            }).join('');
+        }
+
+        // Carrega os dados para o relatório de suprimentos (RDV)
+        async function loadSupplyReport() {
+            if (!currentUser?.permissions?.canViewExpenseReports) {
+                showModal("Não tem permissão para visualizar relatórios de suprimentos.");
+                return;
+            }
+            const promoterUsername = ui.supplyReportPromoterSelect.value;
+            const [year, month] = ui.supplyReportMonthSelect.value.split('-');
+            const quinzena = ui.supplyReportQuinzenaSelect.value;
+
+            if (!promoterUsername) {
+                showModal("Por favor, selecione um promotor.");
+                return;
+            }
+
+            let startDate, endDate;
+            if (quinzena === '1') {
+                startDate = `${year}-${month}-01`;
+                endDate = `${year}-${month}-15`;
+            } else {
+                startDate = `${year}-${month}-16`;
+                const lastDay = new Date(year, month, 0).getDate();
+                endDate = `${year}-${month}-${lastDay}`;
+            }
+            
+            if (ui.supplyReportResultsList) ui.supplyReportResultsList.innerHTML = '<p>A carregar...</p>';
+            if (ui.downloadXlsxButton) ui.downloadXlsxButton.classList.add('hidden');
+            
+            try {
+                const supplyCollectionRef = collection(db, `artifacts/${appId}/public/data/supply_logs`);
+                const qSupply = query(supplyCollectionRef, 
+                    where('date', '>=', startDate), 
+                    where('date', '<=', endDate)
+                );
+                const supplySnapshot = await getDocs(qSupply);
+                const logs = supplySnapshot.docs
+                    .map(d => d.data())
+                    .filter(log => log.promoterUsername === promoterUsername);
+                logs.sort((a,b) => a.date.localeCompare(b.date)); 
+
+                const expensesCollectionRef = collection(db, `artifacts/${appId}/public/data/daily_expenses`);
+                const qExpenses = query(expensesCollectionRef,
+                    where('date', '>=', startDate),
+                    where('date', '<=', endDate)
+                );
+                const expensesSnapshot = await getDocs(qExpenses);
+                const expensesMap = new Map();
+                expensesSnapshot.docs.forEach(doc => {
+                    const data = doc.data();
+                    if (data.promoterUsername === promoterUsername) {
+                        expensesMap.set(data.date, data);
+                    }
+                });
+                
+                currentReportData = { supplies: logs, expenses: expensesMap }; 
+                renderSupplyReport(logs); 
+
+                if (quinzena) { 
+                    if (ui.downloadXlsxButton) ui.downloadXlsxButton.classList.remove('hidden');
+                }
+
+            } catch (error) {
+                console.error("Erro ao carregar relatório:", error);
+                if (ui.supplyReportResultsList) ui.supplyReportResultsList.innerHTML = `<p class="p-3 text-red-500">Erro ao carregar: ${error.message}.</p>`;
+            }
+        }
+        
+        // Renderiza o estado do carregamento do relatório de suprimentos
+        function renderSupplyReport(logs) {
+            if (!ui.supplyReportResultsList) return; 
+            if (logs.length === 0 && currentReportData.expenses.size === 0) {
+                ui.supplyReportResultsList.innerHTML = '<p class="p-3 text-gray-500">Nenhum registo encontrado para o período.</p>';
+                return;
+            }
+            ui.supplyReportResultsList.innerHTML = `<p class="p-3 text-green-600">Dados carregados. Clique em "Transferir Folha de Cálculo" para ver o relatório completo.</p>`;
+        }
+
+        // Gera e transfere o relatório em formato XLSX (Excel)
+        function downloadReportAsXlsx() {
+            try {
+                const promoterUsername = ui.supplyReportPromoterSelect.value;
+                const promoter = allPromotersCache.find(p => p.username === promoterUsername);
+                if (!promoter) {
+                    showModal("Promotor não encontrado.");
+                    return;
+                }
+                const promoterName = promoter.displayName;
+                const quinzena = ui.supplyReportQuinzenaSelect.value;
+                const [year, month] = ui.supplyReportMonthSelect.value.split('-');
+                const monthName = ui.supplyReportMonthSelect.options[ui.supplyReportMonthSelect.selectedIndex].text.split(' de ')[0];
+                
+                const fileName = `RDV_${promoterName.replace(/\s/g, '_')}_${monthName.toUpperCase()}_${quinzena}Q.xlsx`;
+                
+                let adiantado = 1000;
+                if (promoter.role === 'coordenador' || promoter.role === 'lider_de_promotores') { 
+                    adiantado = 2000;
+                }
+
+                const dailyData = [];
+                const supplyDataMap = new Map();
+                currentReportData.supplies.forEach(log => {
+                    const dateKey = log.date;
+                    if (!supplyDataMap.has(dateKey)) supplyDataMap.set(dateKey, { stores: new Set(), venda: 0, comments: [], regions: new Set() }); 
+                    const dayData = supplyDataMap.get(dateKey);
+                    dayData.stores.add(log.storeName);
+                    dayData.venda += Number(log.boxesSupplied) || 0;
+                    if (log.comment) dayData.comments.push(log.comment);
+                    if (log.region) dayData.regions.add(log.region); 
+                });
+
+                const startDay = quinzena === '1' ? 1 : 16;
+                const endDay = quinzena === '1' ? 15 : new Date(year, month, 0).getDate();
+                
+                for (let day = startDay; day <= endDay; day++) {
+                    const date = new Date(Date.UTC(year, month - 1, day));
+                    dailyData.push({ date });
+                }
+                
+                // --- Criação da Folha de Cálculo ---
+                const maxCols = 17; // A a Q
+                const startDataRow = 5; 
+                const numDataRows = dailyData.length;
+                const totalSheetRows = 4 + numDataRows + 3; 
+
+                let ws_data = Array.from({ length: totalSheetRows }, () => Array(maxCols).fill(null));
+
+                let firstKmInitial = null; 
+                let lastKmFinal = null; 
+
+                dailyData.forEach((dayData, i) => {
+                    const R_idx = startDataRow - 1 + i; 
+                    const excelRow = R_idx + 1; 
+                    const dateString = dayData.date.toISOString().split('T')[0];
+                    const supplyDayData = supplyDataMap.get(dateString);
+                    const expenseDayData = currentReportData.expenses.get(dateString);
+                    const dayOfWeek = dayData.date.getUTCDay(); 
+                    const weekDays = ['DOMINGO', 'SEGUNDA', 'TERÇA', 'QUARTA', 'QUINTA', 'SEXTA', 'SÁBADO'];
+                    
+                    let agendaRealizadoDia = '';
+                    if (dayOfWeek === 0 || dayOfWeek === 6) { 
+                        agendaRealizadoDia = weekDays[dayOfWeek];
+                    } else {
+                        agendaRealizadoDia = supplyDayData ? Array.from(supplyDayData.stores).join(', ') : '';
+                    }
+                    const regionsForDay = supplyDayData ? Array.from(supplyDataMap.get(dateString).regions).join(', ') : ''; 
+
+                    const kmInitial = expenseDayData?.kmInitial;
+                    const kmFinal = expenseDayData?.kmFinal;
+
+                    if (kmInitial !== null && kmInitial !== undefined && firstKmInitial === null) {
+                        firstKmInitial = kmInitial; 
+                    }
+                    if (kmFinal !== null && kmFinal !== undefined) {
+                        lastKmFinal = kmFinal; 
+                    }
+
+                    ws_data[R_idx] = [
+                        { v: dayData.date, t: 'd', z: 'dd/mm/yyyy' }, 
+                        null, // B: PARTIDA
+                        null, // C: DESTINO
+                        agendaRealizadoDia, // D: AGENDA REALIZADO/DIA 
+                        regionsForDay, // E: REGIÃO DA LOJA 
+                        supplyDayData?.comments.join('; ') || '', // F: COMENTÁRIO (Visita)
+                        (supplyDayData && supplyDayData.venda !== undefined && supplyDayData.venda !== null && supplyDayData.venda > 0) ? supplyDayData.venda : null, // G: VENDA
+                        kmInitial, // H: KM INICIAL
+                        kmFinal, // I: KM FINAL
+                        { t: 'n', f: `IF(AND(ISNUMBER(I${excelRow}), ISNUMBER(H${excelRow})), I${excelRow}-H${excelRow}, "")` }, // J: KM TOTAL (Fórmula: I-H)
+                        expenseDayData?.fuel || null, // K: COMBUSTÍVEL
+                        expenseDayData?.otherExpenses || null, // L: OUTROS
+                        expenseDayData?.meals || null, // M: REFEIÇÕES
+                        expenseDayData?.hotel || null, // N: HOTEL
+                        expenseData?.transport || null, // O: TRANSPORTES
+                        { t: 'n', f: `SUM(K${excelRow}:O${excelRow})` }, // P: TOTAL DIÁRIO (Fórmula: soma das despesas de K a O para a linha atual)
+                        expenseData?.expenseComment || '' // Q: COMENTÁRIO (Despesas)
+                    ];
+                });
+                
+                const lastDataRowExcel = startDataRow + numDataRows; 
+                const totalRowExcel = lastDataRowExcel + 1; 
+                const finalReportRowExcel = totalRowExcel + 2; 
+
+                const totalKmValue = (firstKmInitial !== null && lastKmFinal !== null) ? (lastKmFinal - firstKmInitial) : null;
+                
+                ws_data[totalRowExcel - 1] = [ 
+                    "TOTAIS", 
+                    null, null, null, null, null, 
+                    { t: 'n', f: `SUM(G${startDataRow}:G${lastDataRowExcel})` }, 
+                    null, null, 
+                    { t: 'n', v: totalKmValue }, 
+                    { t: 'n', f: `SUM(K${startDataRow}:K${lastDataRowExcel})` }, 
+                    { t: 'n', f: `SUM(L${startDataRow}:L${lastDataRowExcel})` }, 
+                    { t: 'n', f: `SUM(M${startDataRow}:M${lastDataRowExcel})` }, 
+                    { t: 'n', f: `SUM(N${startDataRow}:N${lastDataRowExcel})` }, 
+                    { t: 'n', f: `SUM(O${startDataRow}:O${lastDataRowExcel})` }, 
+                    { t: 'n', f: `SUM(P${startDataRow}:P${lastDataRowExcel})` }, 
+                    null
+                ];
+                
+                ws_data[finalReportRowExcel - 1] = [
+                    "R$/MD/KM",
+                    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                    { t: 'n', f: `P${totalRowExcel}/J${totalRowExcel}`, z: '"R$" #,##0.00' } 
+                ];
+
+                const ws = XLSX.utils.aoa_to_sheet(ws_data); 
+                ws['!merges'] = ws['!merges'] || []; 
+
+                // --- Define Estilos ---
+                const styles = {
+                    headerMain: {
+                        font: { name: 'Arial', sz: 14, bold: true, color: { rgb: "000000" } }, 
+                        fill: { fgColor: { rgb: "00B0F0" } }, 
+                        alignment: { horizontal: "center", vertical: "center" }
+                    },
+                    headerSummary: { 
+                        font: { name: 'Arial', sz: 11, bold: true, color: { rgb: "000000" } }, 
+                        fill: { fgColor: { rgb: "00B0F0" } }, 
+                        alignment: { horizontal: "left", vertical: "bottom" } 
+                    },
+                    headerData: { 
+                        font: { name: 'Arial', sz: 11, bold: true, color: { rgb: "000000" } }, 
+                        fill: { fgColor: { rgb: "00B0F0" } }, 
+                        alignment: { horizontal: "center", vertical: "center" }
+                    },
+                    normalText: { 
+                        font: { name: 'Arial', sz: 11, bold: false, color: { rgb: "000000" } }
+                    },
+                    totalRowStyle: { 
+                        font: { name: 'Arial', sz: 11, bold: true, color: { rgb: "000000" } },
+                        fill: { fgColor: { rgb: "D9D9D9" } }, 
+                        alignment: { horizontal: "center", vertical: "center" },
+                        border: { 
+                            top: {style:"thin", color:{auto:1}},
+                            bottom: {style:"thin", color:{auto:1}},
+                            left: {style:"thin", color:{auto:1}},
+                            right: {style:"thin", color:{auto:1}}
+                        }
+                    },
+                    currency: {
+                        numFmt: '"R$" #,##0.00',
+                        font: { name: 'Arial', sz: 11, color: { rgb: "000000" } }
+                    },
+                    date: {
+                        numFmt: 'dd/mm/yyyy',
+                        font: { name: 'Arial', sz: 11, color: { rgb: "000000" } }
+                    },
+                    dayOff: { 
+                        fill: { fgColor: { rgb: "FFF2CC" } } 
+                    }
+                };
+
+                // --- Aplica Estilos e Dados do Cabeçalho ---
+                ws['A1'] = { v: "RELATÓRIO DE DESPESAS E VIAGENS", t: 's', s: styles.headerMain };
+                ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 16 } }); 
+
+                const row2HeaderValues = [
+                    { col: 0, val: "MÊS" }, { col: 1, val: "NOME" }, { col: 2, val: "QUINZENA" }, 
+                    { col: 3, val: "AGENDA REALIZADA/DIA" }, { col: 5, val: "COMENTÁRIO" }, 
+                    { col: 6, val: "VOLUME" }, { col: 7, val: "INICIAL" }, { col: 8, val: "ADIANTADO" }, 
+                    { col: 9, val: "KM FINAL" }, { col: 10, val: "GASTOS" }, { col: 11, val: "KM TOTAL" }, 
+                    { col: 12, val: "SALDO" }, { col: 13, val: "COMBUSTÍVEL" }, { col: 14, val: "DESPESAS DO" }, 
+                    { col: 15, val: "DEPOSITAR" }, { col: 16, val: "TOTAL: RS/MD/KM" } 
+                ];
+
+                row2HeaderValues.forEach(item => {
+                    const cellRef = XLSX.utils.encode_cell({r: 1, c: item.col}); 
+                    ws[cellRef] = { v: item.val, t: 's', s: styles.headerSummary };
+                });
+
+                // Mesclagens para Linha 2 (ajustado para a nova coluna de REGIÃO)
+                ws['!merges'].push(
+                    { s: { r: 1, c: 3 }, e: { r: 1, c: 4 } }, // D2:E2 for "AGENDA REALIZADA/DIA"
+                    { s: { r: 1, c: 5 }, e: { r: 2, c: 5 } }, // F2:F3 for "COMENTÁRIO"
+                    { s: { r: 1, c: 6 }, e: { r: 2, c: 6 } }, // G2:G3 for "VOLUME"
+                    { s: { r: 1, c: 7 }, e: { r: 2, c: 7 } }, // H2:H3 for "INICIAL"
+                    { s: { r: 1, c: 8 }, e: { r: 2, c: 8 } }, // I2:I3 for "ADIANTADO"
+                    { s: { r: 1, c: 9 }, e: { r: 2, c: 9 } }, // J2:J3 for "KM FINAL"
+                    { s: { r: 1, c: 10 }, e: { r: 2, c: 10 } }, // K2:K3 for "GASTOS"
+                    { s: { r: 1, c: 11 }, e: { r: 2, c: 11 } }, // L2:L3 for "KM TOTAL"
+                    { s: { r: 1, c: 12 }, e: { r: 2, c: 12 } }, // M2:M3 for "SALDO"
+                    { s: { r: 1, c: 13 }, e: { r: 2, c: 13 } }, // N2:N3 for "COMBUSTÍVEL"
+                    { s: { r: 1, c: 14 }, e: { r: 1, c: 15 } }, // O2:P2 for "DESPESAS DO"
+                    { s: { r: 1, c: 16 }, e: { r: 2, c: 16 } }  // Q2:Q3 for "TOTAL: RS/MD/KM"
+                );
+
+
+                // Linha 3 valores/fórmulas (ajustado para a nova coluna)
+                ws['A3'] = { v: monthName.toUpperCase(), t: 's', s: styles.normalText }; 
+                ws['B3'] = { v: promoterName.toUpperCase(), t: 's', s: styles.normalText }; 
+                ws['C3'] = { v: parseInt(quinzena), t: 'n', s: styles.normalText }; 
+                // D3 e E3 são mesclados com D2
+                ws['F3'] = { v: "CAIXAS", t: 's', s: styles.normalText }; 
+                // G3 e H3 são mesclados
+                ws['I3'] = { t: 'n', v: adiantado, s: styles.currency }; 
+                // J3 a M3 são mesclados ou vazios
+                ws['K3'] = { t: 'n', f: `SUM(P${startDataRow}:P${lastDataRowExcel})`, s: styles.currency }; // K3: GASTOS total (sum of column P data rows)
+                ws['L3'] = { t: 'n', f: `I3-K3`, s: styles.currency }; // L3: SALDO calc (I3 - K3)
+                // M3, N3, O3 são mesclados ou vazios
+                ws['O3'] = { t: 's', v: "DIA", s: styles.normalText }; // O3: "DIA" (sub-cabeçalho para DESPESAS DO)
+                ws['P3'] = { t: 'n', f: `IF(L3<0, ABS(L3), 0)`, s: styles.currency }; // P3: DEPOSITAR (IF Saldo < 0, ABS(Saldo))
+                // Q3 é mesclado
+
+
+                // Linha 4 cabeçalhos detalhados (ajustado para a nova coluna E)
+                const row4HeadersPDF = [ 
+                    "DATA", "PARTIDA", "DESTINO", "LOJAS", "REGIÃO", "COMENTÁRIO", "VENDA", 
+                    "KM INICIAL", "KM FINAL", "KM TOTAL", "COMBUSTÍVEL", "OUTROS", 
+                    "REFEIÇÕES", "HOTEL", "TRANSPORTES", "TOTAL", "COMENTÁRIO"
+                ];
+                
+                XLSX.utils.sheet_add_aoa(ws, [row4HeadersPDF], { origin: "A4" }); 
+                
+                if (row4HeadersPDF && Array.isArray(row4HeadersPDF) && row4HeadersPDF.length > 0) { 
+                    for(const [c, headerContent] of row4HeadersPDF.entries()) { 
+                        const cellRef = XLSX.utils.encode_cell({r: 3, c: c}); 
+                        if (ws[cellRef]) {
+                            ws[cellRef].s = styles.headerData;
+                        } else if (headerContent !== null && headerContent !== undefined) { 
+                            ws[cellRef] = { t: 's', v: headerContent, s: styles.headerData };
+                        }
+                    }
+                } else {
+                    console.error("Erro: row4HeadersPDF não é um array válido ou está vazio. Não foi possível aplicar estilos aos cabeçalhos da linha 4.");
+                }
+
+                // Aplica estilos às linhas de dados (a partir da linha 5)
+                for (let i = 0; i < numDataRows; i++) { 
+                    const R_idx = startDataRow - 1 + i; 
+                    const excelRow = R_idx + 1; 
+                    const dayData = dailyData[i];
+                    const dayOfWeek = dayData.date.getUTCDay(); 
+
+                    // Aplica estilo de fim de semana à linha inteira
+                    if (dayOfWeek === 0 || dayOfWeek === 6) { 
+                        for (let c = 0; c < maxCols; c++) { 
+                            const cellRef = XLSX.utils.encode_cell({r: R_idx, c: c}); 
+                            if (ws[cellRef]) {
+                                ws[cellRef].s = { ...(ws[cellRef].s || {}), ...styles.dayOff };
+                            } else {
+                                ws[cellRef] = { t: 's', v: '', s: styles.dayOff }; 
+                            }
+                        }
+                    }
+
+                    // Aplica estilos específicos para células de dados (ajustado os índices das colunas)
+                    const cellA = XLSX.utils.encode_cell({r: R_idx, c: 0});
+                    if (ws[cellA]) ws[cellA].s = { ...(ws[cellA].s || {}), ...styles.date };
+
+                    const textCols = [3, 4, 5, 16]; 
+                    textCols.forEach(colIndex => {
+                        const cellRef = XLSX.utils.encode_cell({r: R_idx, c: colIndex});
+                        if (ws[cellRef]) ws[cellRef].s = { ...(ws[cellRef].s || {}), ...styles.normalText };
+                    });
+
+                    const currencyCols = [6, 10, 11, 12, 13, 14, 15]; 
+                    currencyCols.forEach(colIndex => {
+                        const cellRef = XLSX.utils.encode_cell({r: R_idx, c: colIndex});
+                        if (ws[cellRef] && typeof ws[cellRef].v === 'number') { 
+                            ws[cellRef].s = { ...(ws[cellRef].s || {}), ...styles.currency };
+                        }
+                    });
+                    
+                    const numCols_km = [7, 8, 9]; 
+                    numCols_km.forEach(colIndex => {
+                        const cellRef = XLSX.utils.encode_cell({r: R_idx, c: colIndex});
+                        if (ws[cellRef] && typeof ws[cellRef].v === 'number') {
+                            ws[cellRef].s = { ...(ws[cellRef].s || {}), ...styles.normalText };
+                        }
+                    });
+                }
+
+                // Aplica estilo à linha de totais
+                for (let c = 0; c < maxCols; c++) { 
+                    const cellRef = XLSX.utils.encode_cell({r: totalRowExcel -1, c: c}); 
+                    if (ws[cellRef]) {
+                        ws[cellRef].s = { ...(ws[cellRef].s || {}), ...styles.totalRowStyle }; 
+                    } else {
+                        ws[cellRef] = { t: 's', v: '', s: styles.totalRowStyle }; 
+                    }
+                }
+                // Aplica formato de moeda às células de totais monetários (ajustado os índices)
+                const totalCurrencyCols = [6, 10, 11, 12, 13, 14, 15]; 
+                totalCurrencyCols.forEach(colIndex => {
+                    const cellRef = XLSX.utils.encode_cell({r: totalRowExcel -1, c: colIndex});
+                    if (ws[cellRef] && typeof ws[cellRef].v === 'number') { 
+                        ws[cellRef].s = { ...styles.totalRowStyle, ...styles.currency };
+                    }
+                });
+
+                // Aplica estilo ao valor "R$/MD/KM" (ajustado para coluna Q)
+                const rmdKmLabelCellRef = XLSX.utils.encode_cell({r: finalReportRowExcel - 1, c: 0}); 
+                const rmdKmValueCellRef = XLSX.utils.encode_cell({r: finalReportRowExcel - 1, c: 16}); 
+                if (ws[rmdKmLabelCellRef]) {
+                    ws[rmdKmLabelCellRef].s = styles.totalRowStyle; 
+                } else {
+                    ws[rmdKmLabelCellRef] = { t: 's', v: "R$/MD/KM", s: styles.totalRowStyle };
+                }
+
+                if (ws[rmdKmValueCellRef]) {
+                    ws[rmdKmValueCellRef].s = { ...styles.normalText, ...styles.currency }; 
+                }
+
+                // Define as larguras das colunas
+                ws['!cols'] = [
+                    {wch: 12}, 
+                    {wch: 10}, 
+                    {wch: 10}, 
+                    {wch: 25}, 
+                    {wch: 15}, 
+                    {wch: 25}, 
+                    {wch: 10}, 
+                    {wch: 12}, 
+                    {wch: 12}, 
+                    {wch: 12}, 
+                    {wch: 15}, 
+                    {wch: 12}, 
+                    {wch: 12}, 
+                    {wch: 12}, 
+                    {wch: 15}, 
+                    {wch: 15}, 
+                    {wch: 25}  
+                ];
+
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "RDV");
+                XLSX.writeFile(wb, fileName);
+                
+            } catch (err) {
+                console.error("Erro durante a geração ou transferência da folha de cálculo:", err);
+                showModal(`Ocorreu um erro ao gerar a folha de cálculo. Detalhes: ${err.message}`);
+            }
+        }
+        
+        // --- Animation Functions ---
+        // Animação das ondas SVG no rodapé
+        function animateWaves() {
+            let t = 0;
+            const wavePath1 = document.getElementById('wavePath1');
+            const wavePath2 = document.getElementById('wavePath2');
+            const wavePath3 = document.getElementById('wavePath3');
+            if(!wavePath1 || !wavePath2 || !wavePath3) return;
+
+            function loop() {
+                t += 0.02;
+                const amp = 15, freq = 0.08, offset = 70;
+                let d1 = `M0,${offset+5}`;
+                for (let i = 0; i <= 100; i += 2) d1 += ` L${i},${offset+5 + amp*Math.sin(freq*i + t*1.0)}`;
+                d1 += " V100 H0 Z"; wavePath1.setAttribute('d', d1);
+                let d2 = `M0,${offset+15}`;
+                for (let i = 0; i <= 100; i += 2) d2 += ` L${i},${offset+15 + (amp*0.8)*Math.sin(freq*0.9*i + t*1.2 + Math.PI/3)}`;
+                d2 += " V100 H0 Z"; wavePath2.setAttribute('d', d2);
+                let d3 = `M0,${offset+10}`;
+                for (let i = 0; i <= 100; i += 2) d3 += ` L${i},${offset+10 + (amp*0.6)*Math.sin(freq*1.1*i + t*0.8 + (Math.PI*2)/3)}`;
+                d3 += " V100 H0 Z"; wavePath3.setAttribute('d', d3);
+                requestAnimationFrame(loop); 
+            }
+            loop();
+        }
+
+        // Inicializa todas as referências dos elementos da UI
+        function initializeUIElements() {
+            ui = {
+                loginSection: document.getElementById('loginSection'),
+                promoterSection: document.getElementById('promoterSection'),
+                adminSection: document.getElementById('adminSection'),
+                appHeaderTitle: document.getElementById('appHeaderTitle'),
+                headerLogo: document.getElementById('headerLogo'),
+                usernameInput: document.getElementById('username'),
+                passwordInput: document.getElementById('password'),
+                loginButton: document.getElementById('loginButton'),
+                loginError: document.getElementById('loginError'),
+                promoterNameDisplay: document.getElementById('promoterNameDisplay'),
+                daySelect: document.getElementById('daySelect'),
+                currentEffectiveDateDisplay: document.getElementById('currentEffectiveDateDisplay'),
+                storesList: document.getElementById('storesList'),
+                addStoreSection: document.getElementById('addStoreSection'),
+                existingStoreContainer: document.getElementById('existingStoreContainer'),
+                existingStoreSelect: document.getElementById('existingStoreSelect'),
+                addExistingStoreButton: document.getElementById('addExistingStoreButton'),
+                newStoreContainer: document.getElementById('newStoreContainer'),
+                newStoreInput: document.getElementById('newStoreInput'),
+                addNewStoreButton: document.getElementById('addNewStoreButton'),
+                adminViewButton: document.getElementById('adminViewButton'),
+                logoutButton: document.getElementById('logoutButton'),
+                adminPromoterSelect: document.getElementById('adminPromoterSelect'),
+                adminStoresList: document.getElementById('adminStoresList'),
+                adminSelectedDayDisplay: document.getElementById('adminSelectedDayDisplay'),
+                adminPrevDay: document.getElementById('adminPrevDay'),
+                adminNextDay: document.getElementById('adminNextDay'),
+                historyPromoterSelect: document.getElementById('historyPromoterSelect'),
+                historyStartDateInput: document.getElementById('historyStartDate'),
+                historyEndDateInput: document.getElementById('historyEndDate'),
+                loadHistoryButton: document.getElementById('loadHistoryButton'),
+                supplyReportPromoterSelect: document.getElementById('supplyReportPromoterSelect'),
+                supplyReportMonthSelect: document.getElementById('supplyReportMonthSelect'),
+                supplyReportQuinzenaSelect: document.getElementById('supplyReportQuinzenaSelect'),
+                loadSupplyReportButton: document.getElementById('loadSupplyReportButton'),
+                supplyReportResultsList: document.getElementById('supplyReportResultsList'),
+                adminViewTabs: document.getElementById('adminViewTabs'),
+                currentScheduleViewTab: document.getElementById('currentScheduleViewTab'),
+                historyViewTab: document.getElementById('historyViewTab'),
+                supplyReportViewTab: document.getElementById('supplyReportViewTab'),
+                manageUsersTab: document.getElementById('manageUsersTab'), 
+                currentScheduleView: document.getElementById('currentScheduleView'),
+                historyView: document.getElementById('historyView'),
+                supplyReportView: document.getElementById('supplyReportView'),
+                manageUsersView: document.getElementById('manageUsersView'), 
+                backToPromoterViewButton: document.getElementById('backToPromoterViewButton'),
+                adminLogoutButton: document.getElementById('adminLogoutButton'),
+                supplyModal: document.getElementById('supplyModal'),
+                supplyModalTitle: document.getElementById('supplyModalTitle'),
+                boxesSuppliedInput: document.getElementById('boxesSuppliedInput'),
+                storeRegionInput: document.getElementById('storeRegionInput'),
+                storeCommentInput: document.getElementById('storeCommentInput'),
+                submitSupplyButton: document.getElementById('submitSupplyButton'),
+                cancelSupplyButton: document.getElementById('cancelSupplyButton'),
+                modalElement: document.getElementById('customModal'),
+                modalMessageElement: document.getElementById('modalMessage'),
+                closeModalButton: document.getElementById('closeModalButton'),
+                confirmModalElement: document.getElementById('customConfirmModal'),
+                confirmMessageElement: document.getElementById('confirmMessage'),
+                confirmYesButton: document.getElementById('confirmYesButton'),
+                confirmNoButton: document.getElementById('confirmNoButton'),
+                closeConfirmModalButton: document.getElementById('closeConfirmModalButton'),
+                orSeparator: document.getElementById('orSeparator'),
+                downloadXlsxButton: document.getElementById('downloadXlsxButton'),
+                dailyExpensesButton: document.getElementById('dailyExpensesButton'),
+                dailyExpensesModal: document.getElementById('dailyExpensesModal'),
+                dailyExpensesForm: document.getElementById('dailyExpensesForm'),
+                dailyExpensesDate: document.getElementById('dailyExpensesDate'),
+                kmInitialInput: document.getElementById('kmInitialInput'),
+                kmFinalInput: document.getElementById('kmFinalInput'),
+                fuelInput: document.getElementById('fuelInput'),
+                mealsInput: document.getElementById('mealsInput'),
+                hotelInput: document.getElementById('hotelInput'),
+                transportInput: document.getElementById('transportInput'),
+                otherExpensesInput: document.getElementById('otherExpensesInput'),
+                expenseCommentInput: document.getElementById('expenseCommentInput'),
+                saveDailyExpensesButton: document.getElementById('saveDailyExpensesButton'),
+                cancelDailyExpensesButton: document.getElementById('cancelDailyExpensesButton'),
+                editStoreModal: document.getElementById('editStoreModal'),
+                editStoreNameInput: document.getElementById('editStoreNameInput'),
+                editStoreIndexHidden: document.getElementById('editStoreIndexHidden'),
+                cancelEditStoreButton: document.getElementById('cancelEditStoreButton'),
+                saveEditedStoreButton: document.getElementById('saveEditedStoreButton'),
+                newUserInput: document.getElementById('newUserInput'),
+                newUserDisplayNameInput: document.getElementById('newUserDisplayNameInput'),
+                newUserPasswordInput: document.getElementById('newUserPasswordInput'),
+                addUserRoleInput: document.getElementById('addUserRoleInput'), 
+                addUserCanViewExpenses: document.getElementById('addUserCanViewExpenses'),
+                addUserCanModifySchedule: document.getElementById('addUserCanModifySchedule'),
+                addUserCanManageUsers: document.getElementById('addUserCanManageUsers'),
+                addNewUserButton: document.getElementById('addNewUserButton'),
+                addNewUserForm: document.getElementById('addNewUserForm'),
+                manageUsersList: document.getElementById('manageUsersList'),
+                editUserModal: document.getElementById('editUserModal'),
+                editUserUsernameDisplay: document.getElementById('editUserUsernameDisplay'),
+                editUserDisplayNameInput: document.getElementById('editUserDisplayNameInput'),
+                editUserPasswordInput: document.getElementById('editUserPasswordInput'),
+                editUserRoleInput: document.getElementById('editUserRoleInput'), 
+                editUserCanViewExpenses: document.getElementById('editUserCanViewExpenses'),
+                editUserCanModifySchedule: document.getElementById('editUserCanModifySchedule'),
+                editUserCanManageUsers: document.getElementById('editUserCanManageUsers'),
+                cancelEditUserButton: document.getElementById('cancelEditUserButton'),
+                saveEditedUserButton: document.getElementById('saveEditedUserButton'),
+                
+                // Novos elementos para o modal de registo inicial de detalhes da loja
+                initialStoreDetailsModal: document.getElementById('initialStoreDetailsModal'),
+                initialStoreDetailsModalTitle: document.getElementById('initialStoreDetailsModalTitle'),
+                initialStoreRegionInput: document.getElementById('initialStoreRegionInput'),
+                initialStoreCommentInput: document.getElementById('initialStoreCommentInput'),
+                initialStoreLocationStatus: document.getElementById('initialStoreLocationStatus'),
+                initialStoreLocationLink: document.getElementById('initialStoreLocationLink'),
+                confirmInitialStoreDetailsButton: document.getElementById('confirmInitialStoreDetailsButton'),
+                cancelInitialStoreDetailsButton: document.getElementById('cancelInitialStoreDetailsButton')
+            };
+        }
+        
+        // Inicializa a aplicação quando o DOM estiver completamente carregado
+        document.addEventListener('DOMContentLoaded', async () => { 
+            initializeUIElements(); 
+            animateWaves(); 
+            
+            try {
+                // Configuração do Firebase (AGORA USANDO A CONFIGURAÇÃO EXPLÍCITA FORNECIDA)
+                const firebaseConfig = {
+                    apiKey: "AIzaSyBQpljx6TiKe7Ilcv2BKQ0UybdXWKGgfnQ",
+                    authDomain: "hygie-pro-6c634.firebaseapp.com",
+                    databaseURL: "https://hygie-pro-6c634-default-rtdb.firebaseio.com",
+                    projectId: "hygie-pro-6c634",
+                    storageBucket: "hygie-pro-6c634.firebasestorage.app",
+                    messagingSenderId: "594768227804",
+                    appId: "1:594768227804:web:219d53fa1ddf76ddfcf319"
+                };
+                app = initializeApp(firebaseConfig); 
+                auth = getAuth(app);
+                db = getFirestore(app);
+                
+                // Tenta autenticar com o token personalizado primeiro. Se falhar com 'custom-token-mismatch',
+                // tenta autenticar anonimamente.
+                try {
+                    if (typeof __initial_auth_token !== 'undefined') {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                        console.log("Firebase Auth: Autenticado com token personalizado.");
+                    } else {
+                        throw new Error("No custom token available, falling back to anonymous.");
+                    }
+                } catch (error) {
+                    if (error.code === 'auth/custom-token-mismatch' || error.message === "No custom token available, falling back to anonymous.") {
+                        console.warn("Autenticação com token personalizado falhou ou não disponível, a tentar autenticar anonimamente.");
+                        await signInAnonymously(auth);
+                        console.log("Firebase Auth: Autenticado anonimamente.");
+                    } else {
+                        // Re-lança outros erros de autenticação que não sejam 'custom-token-mismatch'
+                        throw error; 
+                    }
+                }
+                
+                await initializePromoterProfiles(); 
+                
+                initializeAppAndAuth(); 
+            } catch (e) {
+                console.error("ERRO CRÍTICO NA INICIALIZAÇÃO DO FIREBASE:", e);
+                showModal("Erro crítico ao inicializar os serviços do Firebase. Por favor, verifique a sua configuração no código e as regras de segurança do Firestore.");
+                if (ui.loginSection) ui.loginSection.classList.remove('hidden'); 
+            }
+
+            // --- Event Listeners ---
+            if (ui.loginButton) ui.loginButton.addEventListener('click', handleLogin);
+            if (ui.passwordInput) ui.passwordInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleLogin(); });
+            if (ui.logoutButton) ui.logoutButton.addEventListener('click', handleLogout);
+            if (ui.adminLogoutButton) ui.adminLogoutButton.addEventListener('click', handleLogout); 
+            if (ui.adminViewButton) ui.adminViewButton.addEventListener('click', () => showAdminView('currentSchedule')); 
+            if (ui.backToPromoterViewButton) ui.backToPromoterViewButton.addEventListener('click', () => { if (currentUser?.role === 'coordenador' || currentUser?.role === 'lider_de_promotores' || currentUser?.role === 'promotor' || currentUser?.role === 'vendedor' || currentUser?.role === 'outros') showPromoterView(); }); 
+            if (ui.daySelect) ui.daySelect.addEventListener('change', (e) => {
+                currentDayOfWeek = e.target.value;
+                updateCurrentEffectiveDate();
+                renderStoresForPromoter();
+            }); 
+            if (ui.adminViewTabs) ui.adminViewTabs.addEventListener('click', (e) => { if (e.target.matches('button[data-tab]')) showAdminView(e.target.dataset.tab); }); 
+            if (ui.adminPromoterSelect) ui.adminPromoterSelect.addEventListener('change', loadAdminPromoterScheduleView); 
+            
+            if (ui.adminPrevDay) ui.adminPrevDay.addEventListener('click', () => {
+                adminViewCurrentDayIndex = (adminViewCurrentDayIndex - 1 + adminViewDays.length) % adminViewDays.length;
+                loadAdminPromoterScheduleView();
+            }); 
+            if (ui.adminNextDay) ui.adminNextDay.addEventListener('click', () => {
+                adminViewCurrentDayIndex = (adminViewCurrentDayIndex + 1) % adminViewDays.length;
+                loadAdminPromoterScheduleView();
+            }); 
+            
+            // Event listeners para adicionar loja (agora apenas adicionam à agenda, sem modal imediato)
+            if (ui.addExistingStoreButton) ui.addExistingStoreButton.addEventListener('click', async () => {
+                if (!ui.existingStoreSelect.value) {
+                    showModal("Por favor, selecione uma loja existente.");
+                    return;
+                }
+                const selectedStore = allMasterStores.find(s => s.id === ui.existingStoreSelect.value);
+                if (selectedStore) {
+                    await addStoreToPromoterSchedule(selectedStore.name);
+                }
+            }); 
+            if (ui.addNewStoreButton) ui.addNewStoreButton.addEventListener('click', async () => {
+                const storeName = ui.newStoreInput.value.trim();
+                if (!storeName) { 
+                    showModal("Por favor, insira o nome da nova loja.");
+                    return; 
+                }
+                await addStoreToPromoterSchedule(storeName);
+            }); 
+
+            if (ui.loadHistoryButton) ui.loadHistoryButton.addEventListener('click', loadHistory); 
+            if (ui.loadSupplyReportButton) ui.loadSupplyReportButton.addEventListener('click', loadSupplyReport); 
+            if (ui.downloadXlsxButton) ui.downloadXlsxButton.addEventListener('click', downloadReportAsXlsx); 
+
+            if (ui.cancelSupplyButton) ui.cancelSupplyButton.addEventListener('click', () => ui.supplyModal.classList.add('hidden')); 
+            if (ui.submitSupplyButton) ui.submitSupplyButton.addEventListener('click', () => {
+                const boxes = parseInt(ui.boxesSuppliedInput.value, 10);
+                const region = ui.storeRegionInput.value.trim();
+                const comment = ui.storeCommentInput.value.trim();
+                
+                // A validação da quantidade de caixas só é necessária se o campo for visível (ou seja, para vendedor)
+                if (currentUser && currentUser.role === 'vendedor' && (isNaN(boxes) || boxes < 0)) {
+                    showModal("Por favor, insira uma quantidade de caixas válida.");
+                    return;
+                }
+                if (!region) { 
+                    showModal("Por favor, preencha o campo 'Região da Loja'.");
+                    return;
+                }
+
+                submitSupplyAndRegisterVisit(currentStoreForSupply.index, currentStoreForSupply.storeData, boxes, region, comment);
+                ui.supplyModal.classList.add('hidden');
+            }); 
+            
+            if (ui.dailyExpensesButton) ui.dailyExpensesButton.addEventListener('click', openDailyExpensesModal); 
+            if (ui.saveDailyExpensesButton) ui.saveDailyExpensesButton.addEventListener('click', saveDailyExpenses); 
+            if (ui.cancelDailyExpensesButton) ui.cancelDailyExpensesButton.addEventListener('click', () => ui.dailyExpensesModal.classList.add('hidden')); 
+
+            if (ui.closeModalButton) ui.closeModalButton.addEventListener('click', () => ui.modalElement.classList.add('hidden')); 
+            if (ui.closeConfirmModalButton) ui.closeConfirmModalButton.addEventListener('click', () => ui.confirmModalElement.classList.add('hidden')); 
+            if (ui.confirmNoButton) ui.confirmNoButton.addEventListener('click', () => ui.confirmModalElement.classList.add('hidden')); 
+
+            // Event Listeners de Gerenciamento de Utilizadores
+            if (ui.addNewUserButton) ui.addNewUserButton.addEventListener('click', addNewUser);
+            // Removido o event listener de 'change' para populateAddUserRoleSelect pois o valor não é mais definido por JS
+            // if (ui.addUserRoleInput) ui.addUserRoleInput.addEventListener('change', populateAddUserRoleSelect); 
+            if (ui.manageUsersTab) ui.manageUsersTab.addEventListener('click', () => showAdminView('manageUsers')); 
+            if (ui.cancelEditUserButton) ui.cancelEditUserButton.addEventListener('click', () => ui.editUserModal.classList.add('hidden'));
+            if (ui.saveEditedUserButton) ui.saveEditedUserButton.addEventListener('click', saveEditedUser);
+            if (ui.cancelEditStoreButton) ui.cancelEditStoreButton.addEventListener('click', () => ui.editStoreModal.classList.add('hidden'));
+            if (ui.saveEditedStoreButton) ui.saveEditedStoreButton.addEventListener('click', saveEditedStoreName);
+
+            // Novos Event Listeners para o modal de registo inicial de detalhes da loja
+            if (ui.confirmInitialStoreDetailsButton) ui.confirmInitialStoreDetailsButton.addEventListener('click', confirmInitialStoreDetails);
+            if (ui.cancelInitialStoreDetailsButton) ui.cancelInitialStoreDetailsButton.addEventListener('click', () => ui.initialStoreDetailsModal.classList.add('hidden'));
+        });
+    </script>
+    <style>
+        /* Estilos gerais para o corpo do documento */
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #f0f2f5; 
+            position: relative; 
+            min-height: 100vh; 
+            padding-bottom: 120px; /* Espaço para as ondas */
+            box-sizing: border-box; 
+        }
+        /* Garante que o conteúdo principal fique acima das ondas */
+        main { 
+            z-index: 10; 
+            position: relative; 
+        }
+        /* Estilo para cartões/seções principais */
+        .card { 
+            background-color: white; 
+            border-radius: 0.75rem; 
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06); 
+            padding: 1.5rem; 
+        }
+        /* Estilo para campos de entrada de texto e seletores */
+        .input-field { 
+            border-radius: 0.375rem; 
+            border: 1px solid #d1d5db; 
+            padding: 0.5rem 0.75rem; 
+            transition: border-color 0.2s, box-shadow 0.2s; 
+            width: 100%; /* Garante que ocupe a largura total */
+        }
+        .input-field:focus { 
+            border-color: #3b82f6; 
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.3); 
+            outline: none; 
+        }
+        /* Estilo para o overlay dos modais */
+        .modal-overlay { 
+            background-color: rgba(0, 0, 0, 0.5); 
+        }
+        /* Estilos para o container das ondas no rodapé */
+        #waveContainer { 
+            position: fixed; 
+            bottom: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100px; 
+            z-index: 0; 
+            pointer-events: none; /* Permite cliques através das ondas */
+        }
+        /* Estilos para os botões de aba na visão de admin */
+        .tab-button {
+            @apply px-4 py-2 text-sm font-medium rounded-t-lg;
+            background-color: transparent;
+            color: #4a5568; /* grey-700 */
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease-in-out;
+        }
+        .tab-button:hover {
+            @apply bg-blue-100 text-blue-600;
+        }
+        .tab-button[data-tab].bg-blue-500 {
+            @apply bg-blue-500 text-white border-blue-500;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-100">
+
+    <!-- Container para a animação das ondas SVG -->
+    <div id="waveContainer">
+        <svg class="wave" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none" style="position: absolute; bottom: 0; left: 0; width: 100%; height: 100%;">
+            <!-- Paths para as diferentes camadas de ondas com cores e transparência -->
+            <path id="wavePath3" d="" fill="rgba(236, 0, 140, 0.3)"></path>
+            <path id="wavePath2" d="" fill="rgba(247, 148, 29, 0.4)"></path>
+            <path id="wavePath1" d="" fill="rgba(0, 93, 170, 0.5)"></path>
+        </svg>
+    </div>
+
+    <!-- Layout principal da aplicação -->
+    <div class="w-full max-w-4xl p-4 mx-auto"> 
+        <header id="appHeader" class="flex items-center justify-between my-6">
+            <h1 id="appHeaderTitle" class="text-3xl font-bold text-slate-800">Roteiro de Promotores</h1>
+            <img id="headerLogo" src="https://i.imgur.com/ldeBPFF.png" alt="Logo Hygieline" class="hidden h-12">
+        </header>
+
+        <main>
+            <!-- Seção de Login -->
+            <section id="loginSection" class="hidden p-8 card">
+                <h2 class="mb-6 text-2xl font-semibold text-center text-slate-700">Acesso ao Sistema</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label for="username" class="block text-sm font-medium text-slate-600">Utilizador</label>
+                        <input type="text" id="username" class="block w-full mt-1 input-field" placeholder="Seu nome de utilizador">
+                    </div>
+                    <div>
+                        <label for="password" class="block text-sm font-medium text-slate-600">Palavra-passe</label>
+                        <input type="password" id="password" class="block w-full mt-1 input-field" placeholder="A sua palavra-passe">
+                    </div>
+                    <button id="loginButton" class="w-full py-3 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">Entrar</button>
+                    <p id="loginError" class="hidden mt-2 text-sm text-center text-red-500"></p>
+                </div>
+            </section>
+
+            <!-- Seção do Promotor (Visão do Utilizador Comum) -->
+            <section id="promoterSection" class="hidden space-y-6 card">
+                <div class="flex flex-col items-start justify-between sm:flex-row sm:items-center">
+                    <h2 id="promoterNameDisplay" class="mb-2 text-xl font-semibold text-slate-800 sm:mb-0"></h2>
+                    <div class="flex space-x-2">
+                        <button id="adminViewButton" class="hidden px-4 py-2 text-sm font-semibold text-white rounded-lg bg-sky-600 hover:bg-sky-700">Painel Admin</button>
+                        <button id="logoutButton" class="px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700">Sair</button>
+                    </div>
+                </div>
+                <div>
+                    <label for="daySelect" class="block mb-1 text-sm font-medium text-slate-600">Dia da Semana:</label>
+                    <select id="daySelect" class="w-full p-2.5 bg-white border rounded-lg border-slate-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="monday">Segunda-feira</option>
+                        <option value="tuesday">Terça-feira</option>
+                        <option value="wednesday">Quarta-feira</option>
+                        <option value="thursday">Quinta-feira</option>
+                        <option value="friday">Sexta-feira</option>
+                        <option value="saturday">Sábado</option>
+                    </select>
+                    <p id="currentEffectiveDateDisplay" class="mt-1 text-xs text-slate-500"></p>
+                </div>
+                   <div class="pt-4 border-t">
+                        <button id="dailyExpensesButton" class="w-full px-4 py-2 text-sm font-semibold text-white bg-teal-600 rounded-lg hover:bg-teal-700">Lançar Despesas do Dia</button>
+                   </div>
+                <!-- Seção para Adicionar Loja (visível apenas com permissão) -->
+                <div id="addStoreSection" class="hidden pt-4 border-t">
+                    <h3 class="mb-3 text-lg font-semibold text-slate-700">Adicionar Loja ao Roteiro</h3>
+                    <div id="existingStoreContainer" class="flex flex-col gap-2 mb-2 sm:flex-row">
+                        <select id="existingStoreSelect" class="flex-grow input-field" disabled>
+                            <option value="">-- A carregar Lojas... --</option>
+                        </select>
+                        <button id="addExistingStoreButton" class="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50" disabled>Adicionar Existente</button>
+                    </div>
+                    <div id="orSeparator" class="my-2 text-sm text-center text-gray-500">OU</div>
+                    <div id="newStoreContainer" class="flex flex-col gap-2 sm:flex-row">
+                        <input type="text" id="newStoreInput" class="flex-grow input-field" placeholder="Nome da Nova Loja">
+                        <button id="addNewStoreButton" class="px-4 py-2 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50" disabled>Adicionar Nova</button>
+                    </div>
+                </div>
+                <!-- Lista de Lojas para o Dia Selecionado -->
+                <div>
+                    <h3 class="mb-3 text-lg font-semibold text-slate-700">Lojas do Dia:</h3>
+                    <ul id="storesList" class="space-y-3"></ul>
+                </div>
+            </section>
+
+            <!-- Seção do Administrador (Visão do Coordenador/Admin) -->
+            <section id="adminSection" class="hidden card">
+                   <div class="flex flex-col items-start justify-between mb-4 sm:flex-row sm:items-center">
+                    <h2 class="mb-2 text-xl font-semibold text-slate-700 sm:mb-0">Painel Coordenador/Admin</h2>
+                    <div class="flex space-x-2">
+                        <button id="backToPromoterViewButton" class="hidden px-4 py-2 text-sm font-semibold text-white rounded-lg bg-slate-600 hover:bg-slate-700">A Minha Visão</button>
+                        <button id="adminLogoutButton" class="px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700">Sair</button>
+                    </div>
+                </div>
+                <!-- Abas de Navegação do Painel Admin -->
+                <div id="adminViewTabs" class="flex flex-wrap mb-6 border-b border-slate-300">
+                    <button id="currentScheduleViewTab" data-tab="currentSchedule" class="px-4 py-2 text-sm font-medium rounded-t-lg tab-button">Roteiros Atuais</button>
+                    <button id="historyViewTab" data-tab="history" class="px-4 py-2 text-sm font-medium rounded-t-lg tab-button">Histórico de Visitas</button>
+                    <button id="supplyReportViewTab" data-tab="supplyReport" class="px-4 py-2 text-sm font-medium rounded-t-lg tab-button">Relatório (RDV)</button>
+                    <button id="manageUsersTab" data-tab="manageUsers" class="px-4 py-2 text-sm font-medium rounded-t-lg tab-button hidden">Gerir Utilizadores</button>
+                </div>
+                
+                <!-- Conteúdo da Aba: Roteiros Atuais -->
+                <div id="currentScheduleView" class="hidden">
+                    <div class="mb-4">
+                        <label for="adminPromoterSelect" class="block mb-1 text-sm font-medium text-slate-600">Ver Roteiro de:</label>
+                        <select id="adminPromoterSelect" class="w-full p-2.5 bg-white border rounded-lg border-slate-300 shadow-sm"></select>
+                    </div>
+                    <div class="flex items-center justify-between my-4">
+                        <button id="adminPrevDay" class="px-3 py-2 text-sm font-semibold text-white rounded-lg bg-slate-500 hover:bg-slate-600">< Dia Anterior</button>
+                        <h3 id="adminSelectedDayDisplay" class="text-lg font-medium text-slate-700">Dia</h3>
+                        <button id="adminNextDay" class="px-3 py-2 text-sm font-semibold text-white rounded-lg bg-slate-500 hover:bg-slate-600">Próximo Dia ></button>
+                    </div>
+                    <ul id="adminStoresList" class="space-y-2"></ul>
+                </div>
+
+                <!-- Conteúdo da Aba: Histórico de Visitas -->
+                <div id="historyView" class="hidden">
+                    <div class="grid items-end grid-cols-1 gap-4 mb-4 md:grid-cols-3">
+                        <div><label for="historyPromoterSelect" class="block mb-1 text-sm font-medium text-slate-600">Promotor:</label><select id="historyPromoterSelect" class="w-full p-2.5 input-field"></select></div>
+                        <div><label for="historyStartDate" class="block mb-1 text-sm font-medium text-slate-600">De:</label><input type="date" id="historyStartDate" class="w-full p-2.5 input-field"></div>
+                        <div><label for="historyEndDate" class="block mb-1 text-sm font-medium text-slate-600">Até:</label><input type="date" id="historyEndDate" class="w-full p-2.5 input-field"></div>
+                    </div>
+                    <button id="loadHistoryButton" class="w-full px-6 py-2 mb-6 text-sm font-semibold text-white rounded-lg md:w-auto bg-emerald-600 hover:bg-emerald-700">Carregar Histórico</button>
+                    <ul id="historyResultsList" class="space-y-2 max-h-[30rem] overflow-y-auto pr-2"></ul>
+                </div>
+                
+                <!-- Conteúdo da Aba: Relatório (RDV) -->
+                <div id="supplyReportView" class="hidden">
+                        <div class="grid items-end grid-cols-1 gap-4 mb-4 md:grid-cols-3">
+                                <div><label for="supplyReportPromoterSelect" class="block mb-1 text-sm font-medium text-slate-600">Promotor:</label><select id="supplyReportPromoterSelect" class="w-full p-2.5 input-field"></select></div>
+                                <div><label for="supplyReportMonthSelect" class="block mb-1 text-sm font-medium text-slate-600">Mês:</label><select id="supplyReportMonthSelect" class="w-full p-2.5 input-field"></select></div>
+                                <div><label for="supplyReportQuinzenaSelect" class="block mb-1 text-sm font-medium text-slate-600">Quinzena:</label><select id="supplyReportQuinzenaSelect" class="w-full p-2.5 input-field">
+                                    <option value="1">1ª Quinzena (1-15)</option>
+                                    <option value="2">2ª Quinzena (16-Fim)</option>
+                                </select></div>
+                        </div>
+                    <div class="flex space-x-2">
+                        <button id="loadSupplyReportButton" class="w-full px-6 py-2 mb-6 text-sm font-semibold text-white bg-indigo-600 rounded-lg md:w-auto hover:bg-indigo-700">Carregar Relatório</button>
+                        <button id="downloadXlsxButton" class="hidden w-full px-6 py-2 mb-6 text-sm font-semibold text-white bg-teal-600 rounded-lg md:w-auto hover:bg-teal-700">Transferir Folha de Cálculo</button>
+                    </div>
+                    <div id="supplyReportResultsList" class="overflow-x-auto"></div>
+                </div>
+
+                <!-- Conteúdo da Aba: Gerir Utilizadores -->
+                <div id="manageUsersView" class="hidden">
+                    <h3 class="mb-4 text-xl font-semibold text-slate-700">Adicionar Novo Utilizador</h3>
+                    <form id="addNewUserForm" class="space-y-4 mb-6 p-4 border rounded-lg bg-gray-50">
+                        <div>
+                            <label for="newUserInput" class="block text-sm font-medium text-slate-600">Nome de Utilizador (username):</label>
+                            <input type="text" id="newUserInput" class="block w-full mt-1 input-field" placeholder="ex: joaosilva" required>
+                        </div>
+                        <div>
+                            <label for="newUserDisplayNameInput" class="block text-sm font-medium text-slate-600">Nome de Exibição:</label>
+                            <input type="text" id="newUserDisplayNameInput" class="block w-full mt-1 input-field" placeholder="ex: João Silva" required>
+                        </div>
+                        <div>
+                            <label for="newUserPasswordInput" class="block text-sm font-medium text-slate-600">Palavra-passe:</label>
+                            <input type="password" id="newUserPasswordInput" class="block w-full mt-1 input-field" required>
+                        </div>
+                        <div>
+                            <label for="addUserRoleInput" class="block text-sm font-medium text-slate-600">Função:</label>
+                            <input type="text" id="addUserRoleInput" class="w-full p-2.5 input-field" placeholder="Ex: promotor, coordenador">
+                        </div>
+                        <div class="space-y-2">
+                            <h4 class="text-sm font-medium text-slate-600">Permissões:</h4>
+                            <div><input type="checkbox" id="addUserCanViewExpenses" class="mr-2"><label for="addUserCanViewExpenses">Visualizar Relatórios de Gastos</label></div>
+                            <div><input type="checkbox" id="addUserCanModifySchedule" class="mr-2"><label for="addUserCanModifySchedule">Atender/Editar Lojas na Agenda</label></div>
+                            <div><input type="checkbox" id="addUserCanManageUsers" class="mr-2"><label for="addUserCanManageUsers">Gerir Outros Utilizadores</label></div>
+                            <div><input type="checkbox" id="addUserCanLaunchExpenses" class="mr-2"><label for="addUserCanLaunchExpenses">Lançar Despesas</label></div>
+                        </div>
+                        <button type="button" id="addNewUserButton" class="w-full px-4 py-2 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700">Adicionar Utilizador</button>
+                    </form>
+
+                    <h3 class="mb-4 text-xl font-semibold text-slate-700">Lista de Utilizadores</h3>
+                    <ul id="manageUsersList" class="space-y-2"></ul>
+                </div>
+            </section>
+        </main>
+    </div>
+    
+    <!-- Modal de Registo de Visita (para promotores registarem venda/suprimento) -->
+    <div id="supplyModal" class="fixed inset-0 z-50 flex items-center justify-center hidden modal-overlay">
+        <div class="w-full max-w-sm p-6 mx-4 bg-white rounded-lg shadow-xl">
+            <h3 id="supplyModalTitle" class="mb-4 text-lg font-semibold text-slate-800"></h3>
+            <div class="space-y-4">
+                <div id="boxesSuppliedInputGroup"> <!-- Adicionado um ID para este div para controlo de visibilidade -->
+                    <label for="boxesSuppliedInput" id="boxesSuppliedLabel" class="block text-sm font-medium text-slate-600">Venda (€):</label>
+                    <input type="number" id="boxesSuppliedInput" class="block w-full mt-1 input-field" placeholder="Ex: 10" min="0">
+                </div>
+                <div>
+                    <label for="storeRegionInput" class="block text-sm font-medium text-slate-600">Região da Loja:</label>
+                    <input type="text" id="storeRegionInput" class="block w-full mt-1 input-field" placeholder="Ex: Zona Sul, Centro">
+                </div>
+                <div>
+                    <label for="storeCommentInput" class="block text-sm font-medium text-slate-600">Comentário da Visita:</label>
+                    <textarea id="storeCommentInput" class="block w-full mt-1 input-field" placeholder="Adicione uma observação..."></textarea>
+                </div>
+            </div>
+            <div class="flex justify-end mt-6 space-x-3">
+                <button id="cancelSupplyButton" class="px-4 py-2 bg-gray-200 rounded-lg text-slate-700 hover:bg-gray-300">Cancelar</button>
+                <button id="submitSupplyButton" class="px-4 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700">Confirmar</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal de Lançamento de Despesas Diárias -->
+    <div id="dailyExpensesModal" class="fixed inset-0 z-50 flex items-center justify-center hidden modal-overlay">
+        <div class="w-full max-w-md p-6 mx-4 bg-white rounded-lg shadow-xl max-h-[90vh] overflow-y-auto">
+            <h3 class="text-lg font-semibold text-slate-800">Lançar Despesas e KM</h3>
+            <p id="dailyExpensesDate" class="mb-4 text-sm text-slate-500"></p>
+            <form id="dailyExpensesForm" class="space-y-4">
+                <div>
+                    <label for="kmInitialInput" class="block text-sm font-medium text-slate-600">KM Inicial:</label>
+                    <input type="number" id="kmInitialInput" class="block w-full mt-1 input-field" placeholder="Ex: 15000">
+                </div>
+                <div>
+                    <label for="kmFinalInput" class="block text-sm font-medium text-slate-600">KM Final:</label>
+                    <input type="number" id="kmFinalInput" class="block w-full mt-1 input-field" placeholder="Ex: 15120">
+                </div>
+                <hr/>
+                <div>
+                    <label for="fuelInput" class="block text-sm font-medium text-slate-600">Combustível (€):</label>
+                    <input type="number" step="0.01" id="fuelInput" class="block w-full mt-1 input-field" placeholder="Ex: 150.50">
+                </div>
+                <div>
+                    <label for="mealsInput" class="block text-sm font-medium text-slate-600">Refeições (€):</label>
+                    <input type="number" step="0.01" id="mealsInput" class="block w-full mt-1 input-field" placeholder="Ex: 35.00">
+                </div>
+                <div>
+                    <label for="hotelInput" class="block text-sm font-medium text-slate-600">Hotel (€):</label>
+                    <input type="number" step="0.01" id="hotelInput" class="block w-full mt-1 input-field" placeholder="Ex: 120.00">
+                </div>
+                <div>
+                    <label for="transportInput" class="block text-sm font-medium text-slate-600">Transportes (€):</label>
+                    <input type="number" step="0.01" id="transportInput" class="block w-full mt-1 input-field" placeholder="Ex: 15.00">
+                </div>
+                <div>
+                    <label for="otherExpensesInput" class="block text-sm font-medium text-slate-600">Outros (€):</label>
+                    <input type="number" step="0.01" id="otherExpensesInput" class="block w-full mt-1 input-field" placeholder="Ex: 20.00">
+                </div>
+                   <div>
+                        <label for="expenseCommentInput" class="block text-sm font-medium text-slate-600">Comentário da Despesa:</label>
+                        <textarea id="expenseCommentInput" class="block w-full mt-1 input-field" placeholder="Adicione uma observação..."></textarea>
+                   </div>
+            </form>
+            <div class="flex justify-end mt-6 space-x-3">
+                <button id="cancelDailyExpensesButton" class="px-4 py-2 bg-gray-200 rounded-lg text-slate-700 hover:bg-gray-300">Cancelar</button>
+                <button id="saveDailyExpensesButton" class="px-4 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Modal de Mensagem Personalizado (substitui alert()) -->
+    <div id="customModal" class="fixed inset-0 z-50 flex items-center justify-center hidden modal-overlay">
+        <div class="w-full max-w-sm p-6 mx-4 bg-white rounded-lg shadow-xl">
+            <h3 class="mb-4 text-lg font-semibold text-slate-800">Atenção</h3>
+            <p id="modalMessage" class="mb-6 text-slate-600"></p>
+            <button id="closeModalButton" class="w-full px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">OK</button>
+        </div>
+    </div>
+
+    <!-- Modal de Confirmação Personalizado (substitui confirm()) -->
+    <div id="customConfirmModal" class="fixed inset-0 z-50 flex items-center justify-center hidden modal-overlay">
+       <div class="relative w-full max-w-sm p-6 mx-4 bg-white rounded-lg shadow-xl">
+            <h3 class="mb-4 text-lg font-semibold text-slate-800">Confirmar Ação</h3>
+            <p id="confirmMessage" class="mb-6 text-slate-600"></p>
+            <div class="flex justify-end space-x-3">
+                <button id="confirmNoButton" class="px-4 py-2 bg-gray-200 rounded-lg text-slate-700 hover:bg-gray-300">Não</button>
+                <button id="confirmYesButton" class="px-4 py-2 text-white bg-red-600 rounded-lg hover:bg-red-700">Sim</button>
+            </div>
+            <button id="closeConfirmModalButton" aria-label="Fechar" class="absolute text-slate-400 top-3 right-3 hover:text-slate-600">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+       </div>
+    </div>
+
+    <!-- Modal para Editar Nome da Loja -->
+    <div id="editStoreModal" class="fixed inset-0 z-50 flex items-center justify-center hidden modal-overlay">
+        <div class="w-full max-w-sm p-6 mx-4 bg-white rounded-lg shadow-xl">
+            <h3 class="mb-4 text-lg font-semibold text-slate-800">Editar Nome da Loja</h3>
+            <input type="hidden" id="editStoreIndexHidden">
+            <div class="space-y-4">
+                <div>
+                    <label for="editStoreNameInput" class="block text-sm font-medium text-slate-600">Novo Nome da Loja:</label>
+                    <input type="text" id="editStoreNameInput" class="block w-full mt-1 input-field" placeholder="Nome da Loja" required>
+                </div>
+            </div>
+            <div class="flex justify-end mt-6 space-x-3">
+                <button id="cancelEditStoreButton" class="px-4 py-2 bg-gray-200 rounded-lg text-slate-700 hover:bg-gray-300">Cancelar</button>
+                <button id="saveEditedStoreButton" class="px-4 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para Editar Utilizador -->
+    <div id="editUserModal" class="fixed inset-0 z-50 flex items-center justify-center hidden modal-overlay">
+        <div class="w-full max-w-md p-6 mx-4 bg-white rounded-lg shadow-xl">
+            <h3 class="mb-4 text-lg font-semibold text-slate-800">Editar Utilizador</h3>
+            <p id="editUserUsernameDisplay" class="mb-4 text-sm text-slate-500 font-mono"></p>
+            <div class="space-y-4">
+                <div>
+                    <label for="editUserDisplayNameInput" class="block text-sm font-medium text-slate-600">Nome de Exibição:</label>
+                    <input type="text" id="editUserDisplayNameInput" class="block w-full mt-1 input-field" required>
+                </div>
+                <div>
+                    <label for="editUserPasswordInput" class="block text-sm font-medium text-slate-600">Nova Palavra-passe (deixe em branco para não alterar):</label>
+                    <input type="password" id="editUserPasswordInput" class="block w-full mt-1 input-field">
+                </div>
+                <div>
+                    <label for="editUserRoleInput" class="block text-sm font-medium text-slate-600">Função:</label>
+                    <input type="text" id="editUserRoleInput" class="w-full p-2.5 input-field" placeholder="Ex: promotor, coordenador">
+                </div>
+                <div class="space-y-2">
+                    <h4 class="text-sm font-medium text-slate-600">Permissões:</h4>
+                    <div><input type="checkbox" id="editUserCanViewExpenses" class="mr-2"><label for="editUserCanViewExpenses">Visualizar Relatórios de Gastos</label></div>
+                    <div><input type="checkbox" id="editUserCanModifySchedule" class="mr-2"><label for="editUserCanModifySchedule">Atender/Editar Lojas na Agenda</label></div>
+                    <div><input type="checkbox" id="editUserCanManageUsers" class="mr-2"><label for="editUserCanManageUsers">Gerir Outros Utilizadores</label></div>
+                    <div><input type="checkbox" id="editUserCanLaunchExpenses" class="mr-2"><label for="editUserCanLaunchExpenses">Lançar Despesas</label></div>
+                </div>
+            </div>
+            <div class="flex justify-end mt-6 space-x-3">
+                <button id="cancelEditUserButton" class="px-4 py-2 bg-gray-200 rounded-lg text-slate-700 hover:bg-gray-300">Cancelar</button>
+                <button id="saveEditedUserButton" class="px-4 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- NOVO Modal para Registo Inicial de Detalhes da Loja -->
+    <div id="initialStoreDetailsModal" class="fixed inset-0 z-50 flex items-center justify-center hidden modal-overlay">
+        <div class="w-full max-w-sm p-6 mx-4 bg-white rounded-lg shadow-xl">
+            <h3 id="initialStoreDetailsModalTitle" class="mb-4 text-lg font-semibold text-slate-800">Registar Detalhes da Loja</h3>
+            <div class="space-y-4">
+                <div>
+                    <label for="initialStoreRegionInput" class="block text-sm font-medium text-slate-600">Região de Atendimento da Loja:</label>
+                    <input type="text" id="initialStoreRegionInput" class="block w-full mt-1 input-field" placeholder="Ex: Zona Sul, Centro" required>
+                </div>
+                <div>
+                    <label for="initialStoreCommentInput" class="block text-sm font-medium text-slate-600">Comentário Opcional:</label>
+                    <textarea id="initialStoreCommentInput" class="block w-full mt-1 input-field" placeholder="Adicione observações sobre a loja..."></textarea>
+                </div>
+                <div class="mt-4">
+                    <p class="text-sm font-medium text-slate-600">Localização Atual (da Loja):</p>
+                    <p id="initialStoreLocationStatus" class="text-xs text-gray-500 mb-2">A obter localização...</p>
+                    <a id="initialStoreLocationLink" href="#" target="_blank" class="hidden text-xs text-blue-500 hover:underline">Ver Localização no Mapa</a>
+                </div>
+            </div>
+            <div class="flex justify-end mt-6 space-x-3">
+                <button id="cancelInitialStoreDetailsButton" class="px-4 py-2 bg-gray-200 rounded-lg text-slate-700 hover:bg-gray-300">Cancelar</button>
+                <button id="confirmInitialStoreDetailsButton" class="px-4 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700">Registar Detalhes</button>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
